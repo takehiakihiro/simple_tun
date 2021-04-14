@@ -36,6 +36,7 @@
 #include <sys/time.h>
 #include <errno.h>
 #include <stdarg.h>
+#include <sys/wait.h>
 
 /* buffer for reading from tun/tap interface, must be >= 1500 */
 #define BUFSIZE 2000   
@@ -78,6 +79,25 @@ int tun_alloc(char *dev, int flags) {
   strcpy(dev, ifr.ifr_name);
 
   return fd;
+}
+
+/**
+ * 末尾の改行文字を除いた文字数を返す<BR>
+ *   str から末尾の改行文字などを取り除いた文字数を返します。
+ * @param[in]  str チェック文字列
+ * @retval     文字数
+ */
+size_t el_chop(const char *str)
+{
+    int i, len = strlen(str);
+    for (i = len - 1; i >= 0; i--) {
+        if (iscntrl(str[i])) {
+            len--;
+        } else {
+            break;
+        }
+    }
+    return len;
 }
 
 /**
