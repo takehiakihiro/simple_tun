@@ -80,6 +80,116 @@ int tun_alloc(char *dev, int flags) {
   return fd;
 }
 
+/**
+ * 任意コマンドの実行<BR>
+ *   command を argv を引数に実行し、実行が終わるまでブロックします。<BR>
+ *   それぞれの形式は execvp に準じます。<BR>
+ *   実行が成功した場合、status に exit ステータスが入ります。
+ * @param[in]  status 状態
+ * @param[in]  command コマンド
+ * @param[in]  argv コマンドの引数
+ * @retval  0  成功
+ * @retval  -1 失敗
+ */
+int exec_command(int *status, const char *command, char *const argv[])
+{
+    int ret = 0, pid, s;
+    char str[BUFSIZ];
+    int pipefds[2];
+    FILE *cmdout;
+ 
+    // パイプ作成
+    if (pipe(pipefds) < 0) {
+        perror("pipe");
+        return -1;
+    }
+    // 実行
+    if ((pid = fork()) < 0) {
+        perror("fork");
+        close(pipefds[0]);
+        close(pipefds[1]);
+        return -1;
+    }
+ 
+    if (pid == 0) {
+        // 子プロセス側
+        if (close(STDIN_FILENO) < 0) {
+            exit(EXIT_FAILURE);
+        }
+        if (close(pipefds[0]) < 0) {
+            exit(EXIT_FAILURE);
+        }
+        if (dup2(pipefds[1], STDOUT_FILENO) < 0) {
+            exit(EXIT_FAILURE);
+        }
+        if (dup2(pipefds[1], STDERR_FILENO) < 0) {
+            exit(EXIT_FAILURE);
+        }
+        execvp(command, argv);
+        exit(EXIT_FAILURE);
+    }
+    // 親プロセス側
+    if (close(pipefds[1]) < 0) {
+        ret = -1;
+    } else if ((cmdout = fdopen(pipefds[0], "r")) == NULL) {
+        ret = -1;
+    } else {
+        while (fgets(str, sizeof(str), cmdout) != NULL) {
+            str[el_chop(str)] = '\0';
+        }
+        fclose(cmdout);
+    }
+ 
+    // 終了待ち
+    if (waitpid(pid, &s, 0) < 0) {
+        ret = -1;
+    }
+ 
+    if (ret == 0)
+        *status = s;
+ 
+    return ret;
+}
+ 
+/**
+ */
+int set_ip(const char *dev_name, const char *ipaddr)
+{
+    int status;
+    const char *argv[6];
+ 
+    // ip add add 10.10.10.10/24 dev tun10
+    argv[0] = "address";
+    argv[1] = "add";
+    argv[2] = ipaddr;
+    argv[3] = "dev";
+    argv[4] = dev_name;
+    argv[5] = NULL;
+ 
+    if (exec_command(&status, "ip", (char *const *) argv) < 0) {
+        return -1;
+    }
+    if (status != 0) {
+        return -1;
+    }
+ 
+    // ip link set tun10 up
+    argv[0] = "link";
+    argv[1] = "set";
+    argv[2] = dev_name;
+    argv[3] = "up";
+    argv[4] = NULL;
+ 
+    if (exec_command(&status, "ip", (char *const *) argv) < 0) {
+        return -1;
+    }
+    if (status != 0) {
+        return -1;
+    }
+ 
+    return 0;
+}
+
 /**************************************************************************
  * cread: read routine that checks for errors and exits if an error is    *
  *        returned.                                                       *
@@ -177,6 +287,7 @@ int main(int argc, char *argv[]) {
   int tap_fd, option;
   int flags = IFF_TUN;
   char if_name[IFNAMSIZ] = "";
+  char ipaddr[128] = { 0 };
   int maxfd;
   uint16_t nread, nwrite, plength;
   char buffer[BUFSIZE];
@@ -191,7 +302,7 @@ int main(int argc, char *argv[]) {
   progname = argv[0];
   
   /* Check command line options */
-  while((option = getopt(argc, argv, "i:sc:p:uahd")) > 0) {
+  while((option = getopt(argc, argv, "i:sc:p:uahdn:")) > 0) {
     switch(option) {
       case 'd':
         debug = 1;
@@ -201,6 +312,9 @@ int main(int argc, char *argv[]) {
         break;
       case 'i':
         strncpy(if_name,optarg, IFNAMSIZ-1);
+        break;
+      case 'n':
+        strncpy(ipaddr, optarg, 128);
         break;
       case 's':
         cliserv = SERVER;
@@ -248,7 +362,10 @@ int main(int argc, char *argv[]) {
     my_err("Error connecting to tun/tap interface %s!\n", if_name);
     exit(1);
   }
-
+  if (set_ip(if_name, ipaddr) < 0) {
+    my_err("Error up to tun/tap interface %s!\n", if_name);
+    exit(1);
+  }
   do_debug("Successfully connected to interface %s\n", if_name);
 
   if ( (sock_fd = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
