@@ -199,10 +199,12 @@ int set_ip(const char *dev_name, const char *ipaddr)
   if (exec_command(&status, "ip", (char *const *) argv) < 0) {
     return -1;
   }
+#if 0
   if (status != 0) {
-    my_err("status is not 0");
+    my_err("status is not 0\n");
     return -1;
   }
+#endif
 
   // ip link set tun10 up
   argv[0] = "link";
@@ -214,10 +216,12 @@ int set_ip(const char *dev_name, const char *ipaddr)
   if (exec_command(&status, "ip", (char *const *) argv) < 0) {
     return -1;
   }
+#if 0
   if (status != 0) {
-    my_err("status is not 0");
+    my_err("status is not 0\n");
     return -1;
   }
+#endif
 
   return 0;
 }
