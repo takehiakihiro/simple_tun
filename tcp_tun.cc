@@ -48,6 +48,8 @@
 int debug;
 char *progname;
 
+void my_err(const char *msg, ...);
+
 /**************************************************************************
  * tun_alloc: allocates or reconnects to a tun/tap device. The caller     *
  *            must reserve enough space in *dev.                          *
@@ -114,101 +116,110 @@ size_t el_chop(const char *str)
  */
 int exec_command(int *status, const char *command, char *const argv[])
 {
-    int ret = 0, pid, s;
-    char str[BUFSIZ];
-    int pipefds[2];
-    FILE *cmdout;
- 
-    // パイプ作成
-    if (pipe(pipefds) < 0) {
-        perror("pipe");
-        return -1;
+  int ret = 0, pid, s;
+  char str[BUFSIZ];
+  int pipefds[2];
+  FILE *cmdout;
+
+  // パイプ作成
+  if (pipe(pipefds) < 0) {
+    perror("pipe");
+    return -1;
+  }
+  // 実行
+  if ((pid = fork()) < 0) {
+    perror("fork");
+    close(pipefds[0]);
+    close(pipefds[1]);
+    return -1;
+  }
+
+  if (pid == 0) {
+    // 子プロセス側
+    if (close(STDIN_FILENO) < 0) {
+      perror("close");
+      exit(EXIT_FAILURE);
     }
-    // 実行
-    if ((pid = fork()) < 0) {
-        perror("fork");
-        close(pipefds[0]);
-        close(pipefds[1]);
-        return -1;
+    if (close(pipefds[0]) < 0) {
+      perror("close");
+      exit(EXIT_FAILURE);
     }
- 
-    if (pid == 0) {
-        // 子プロセス側
-        if (close(STDIN_FILENO) < 0) {
-            exit(EXIT_FAILURE);
-        }
-        if (close(pipefds[0]) < 0) {
-            exit(EXIT_FAILURE);
-        }
-        if (dup2(pipefds[1], STDOUT_FILENO) < 0) {
-            exit(EXIT_FAILURE);
-        }
-        if (dup2(pipefds[1], STDERR_FILENO) < 0) {
-            exit(EXIT_FAILURE);
-        }
-        execvp(command, argv);
-        exit(EXIT_FAILURE);
+    if (dup2(pipefds[1], STDOUT_FILENO) < 0) {
+      perror("dup2");
+      exit(EXIT_FAILURE);
     }
-    // 親プロセス側
-    if (close(pipefds[1]) < 0) {
-        ret = -1;
-    } else if ((cmdout = fdopen(pipefds[0], "r")) == NULL) {
-        ret = -1;
-    } else {
-        while (fgets(str, sizeof(str), cmdout) != NULL) {
-            str[el_chop(str)] = '\0';
-        }
-        fclose(cmdout);
+    if (dup2(pipefds[1], STDERR_FILENO) < 0) {
+      perror("dup2");
+      exit(EXIT_FAILURE);
     }
- 
-    // 終了待ち
-    if (waitpid(pid, &s, 0) < 0) {
-        ret = -1;
+    execvp(command, argv);
+    exit(EXIT_FAILURE);
+  }
+  // 親プロセス側
+  if (close(pipefds[1]) < 0) {
+    perror("close");
+    ret = -1;
+  } else if ((cmdout = fdopen(pipefds[0], "r")) == NULL) {
+    perror("fdopen");
+    ret = -1;
+  } else {
+    while (fgets(str, sizeof(str), cmdout) != NULL) {
+      str[el_chop(str)] = '\0';
     }
- 
-    if (ret == 0)
-        *status = s;
- 
-    return ret;
+    fclose(cmdout);
+  }
+
+  // 終了待ち
+  if (waitpid(pid, &s, 0) < 0) {
+    perror("waitpid");
+    ret = -1;
+  }
+
+  if (ret == 0)
+    *status = s;
+
+  return ret;
 }
  
 /**
  */
 int set_ip(const char *dev_name, const char *ipaddr)
 {
-    int status;
-    const char *argv[6];
- 
-    // ip add add 10.10.10.10/24 dev tun10
-    argv[0] = "address";
-    argv[1] = "add";
-    argv[2] = ipaddr;
-    argv[3] = "dev";
-    argv[4] = dev_name;
-    argv[5] = NULL;
- 
-    if (exec_command(&status, "ip", (char *const *) argv) < 0) {
-        return -1;
-    }
-    if (status != 0) {
-        return -1;
-    }
- 
-    // ip link set tun10 up
-    argv[0] = "link";
-    argv[1] = "set";
-    argv[2] = dev_name;
-    argv[3] = "up";
-    argv[4] = NULL;
- 
-    if (exec_command(&status, "ip", (char *const *) argv) < 0) {
-        return -1;
-    }
-    if (status != 0) {
-        return -1;
-    }
- 
-    return 0;
+  int status;
+  const char *argv[6];
+
+  // ip add add 10.10.10.10/24 dev tun10
+  argv[0] = "address";
+  argv[1] = "add";
+  argv[2] = ipaddr;
+  argv[3] = "dev";
+  argv[4] = dev_name;
+  argv[5] = NULL;
+
+  if (exec_command(&status, "ip", (char *const *) argv) < 0) {
+    return -1;
+  }
+  if (status != 0) {
+    my_err("status is not 0");
+    return -1;
+  }
+
+  // ip link set tun10 up
+  argv[0] = "link";
+  argv[1] = "set";
+  argv[2] = dev_name;
+  argv[3] = "up";
+  argv[4] = NULL;
+
+  if (exec_command(&status, "ip", (char *const *) argv) < 0) {
+    return -1;
+  }
+  if (status != 0) {
+    my_err("status is not 0");
+    return -1;
+  }
+
+  return 0;
 }
 
 /**************************************************************************
