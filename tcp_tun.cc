@@ -85,10 +85,6 @@ int tun_alloc(char *dev, int flags) {
 }
 
 /**
- * 末尾の改行文字を除いた文字数を返す<BR>
- *   str から末尾の改行文字などを取り除いた文字数を返します。
- * @param[in]  str チェック文字列
- * @retval     文字数
  */
 size_t el_chop(const char *str)
 {
@@ -104,15 +100,6 @@ size_t el_chop(const char *str)
 }
 
 /**
- * 任意コマンドの実行<BR>
- *   command を argv を引数に実行し、実行が終わるまでブロックします。<BR>
- *   それぞれの形式は execvp に準じます。<BR>
- *   実行が成功した場合、status に exit ステータスが入ります。
- * @param[in]  status 状態
- * @param[in]  command コマンド
- * @param[in]  argv コマンドの引数
- * @retval  0  成功
- * @retval  -1 失敗
  */
 int exec_command(int *status, const char *command, char *const argv[])
 {
@@ -121,12 +108,10 @@ int exec_command(int *status, const char *command, char *const argv[])
   int pipefds[2];
   FILE *cmdout;
 
-  // パイプ作成
   if (pipe(pipefds) < 0) {
     perror("pipe");
     return -1;
   }
-  // 実行
   if ((pid = fork()) < 0) {
     perror("fork");
     close(pipefds[0]);
@@ -135,7 +120,6 @@ int exec_command(int *status, const char *command, char *const argv[])
   }
 
   if (pid == 0) {
-    // 子プロセス側
     if (close(STDIN_FILENO) < 0) {
       perror("close");
       exit(EXIT_FAILURE);
@@ -155,7 +139,6 @@ int exec_command(int *status, const char *command, char *const argv[])
     execvp(command, argv);
     exit(EXIT_FAILURE);
   }
-  // 親プロセス側
   if (close(pipefds[1]) < 0) {
     perror("close");
     ret = -1;
@@ -169,7 +152,6 @@ int exec_command(int *status, const char *command, char *const argv[])
     fclose(cmdout);
   }
 
-  // 終了待ち
   if (waitpid(pid, &s, 0) < 0) {
     perror("waitpid");
     ret = -1;
@@ -186,42 +168,40 @@ int exec_command(int *status, const char *command, char *const argv[])
 int set_ip(const char *dev_name, const char *ipaddr)
 {
   int status;
-  const char *argv[6];
+  const char *argv[10];
 
   // ip add add 10.10.10.10/24 dev tun10
-  argv[0] = "address";
-  argv[1] = "add";
-  argv[2] = ipaddr;
-  argv[3] = "dev";
-  argv[4] = dev_name;
+  argv[0] = "ip";
+  argv[1] = "address";
+  argv[2] = "add";
+  argv[3] = ipaddr;
+  argv[4] = "dev";
+  argv[5] = dev_name;
+  argv[6] = NULL;
+
+  if (exec_command(&status, "ip", (char *const *) argv) < 0) {
+    return -1;
+  }
+  if (status != 0) {
+    my_err("ip address add status is %d\n", status);
+    return -1;
+  }
+
+  // ip link set tun10 up
+  argv[0] = "ip";
+  argv[1] = "link";
+  argv[2] = "set";
+  argv[3] = dev_name;
+  argv[4] = "up";
   argv[5] = NULL;
 
   if (exec_command(&status, "ip", (char *const *) argv) < 0) {
     return -1;
   }
-#if 0
   if (status != 0) {
-    my_err("status is not 0\n");
+    my_err("ip link set status is %d\n", status);
     return -1;
   }
-#endif
-
-  // ip link set tun10 up
-  argv[0] = "link";
-  argv[1] = "set";
-  argv[2] = dev_name;
-  argv[3] = "up";
-  argv[4] = NULL;
-
-  if (exec_command(&status, "ip", (char *const *) argv) < 0) {
-    return -1;
-  }
-#if 0
-  if (status != 0) {
-    my_err("status is not 0\n");
-    return -1;
-  }
-#endif
 
   return 0;
 }
