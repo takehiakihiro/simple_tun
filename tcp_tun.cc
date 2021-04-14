@@ -37,6 +37,7 @@
 #include <errno.h>
 #include <stdarg.h>
 #include <sys/wait.h>
+#include <ctype.h>
 
 /* buffer for reading from tun/tap interface, must be >= 1500 */
 #define BUFSIZE 2000   
