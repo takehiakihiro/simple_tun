@@ -69,7 +69,7 @@ int tun_alloc(char *dev, int flags) {
 
   memset(&ifr, 0, sizeof(ifr));
 
-  ifr.ifr_flags = flags;
+  ifr.ifr_flags = flags | IFF_NO_PI;
 
   if (*dev) {
     strncpy(ifr.ifr_name, dev, IFNAMSIZ);
