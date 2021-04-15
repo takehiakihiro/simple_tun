@@ -42,7 +42,7 @@
 #include <sys/wait.h>
 
 /* buffer for reading from tun/tap interface, must be >= 1500 */
-#define BUFSIZE 2000   
+#define BUFSIZE 10000   
 #define CLIENT 0
 #define SERVER 1
 #define PORT 55555
@@ -529,6 +529,7 @@ int main(int argc, char *argv[]) {
     perror("socket()");
     exit(1);
   }
+  do_debug("listen sock=%d\n", sock_fd);
 
   if (cliserv == CLIENT) {
     /* Client, try to connect to server */
@@ -584,7 +585,7 @@ int main(int argc, char *argv[]) {
       exit(1);
     }
 
-    do_debug("SERVER: Client connected from %s\n", inet_ntoa(remote.sin_addr));
+    do_debug("SERVER: Client connected from sock=%d: %s\n", net_fd, inet_ntoa(remote.sin_addr));
   }
   
   std::thread tap_read_th(tap_read, tap_fd, net_fd);
