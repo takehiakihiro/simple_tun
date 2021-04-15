@@ -69,7 +69,7 @@ int tun_alloc(char *dev, int flags) {
 
   memset(&ifr, 0, sizeof(ifr));
 
-  ifr.ifr_flags = flags | IFF_NO_PI;
+  ifr.ifr_flags = flags;
 
   if (*dev) {
     strncpy(ifr.ifr_name, dev, IFNAMSIZ);
@@ -440,10 +440,10 @@ int main(int argc, char *argv[]) {
         port = atoi(optarg);
         break;
       case 'u':
-        flags = IFF_TUN;
+        flags = IFF_TUN | IFF_ONE_QUEUE;
         break;
       case 'a':
-        flags = IFF_TAP;
+        flags = IFF_TAP | IFF_NO_PI;
         break;
       default:
         my_err("Unknown option %c\n", option);
@@ -471,7 +471,7 @@ int main(int argc, char *argv[]) {
   }
 
   /* initialize tun/tap interface */
-  if ( (tap_fd = tun_alloc(if_name, flags | IFF_NO_PI)) < 0 ) {
+  if ( (tap_fd = tun_alloc(if_name, flags)) < 0 ) {
     my_err("Error connecting to tun/tap interface %s!\n", if_name);
     exit(1);
   }
