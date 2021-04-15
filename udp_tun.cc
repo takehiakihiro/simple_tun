@@ -343,15 +343,13 @@ void tap_read(int tap_fd, int net_fd) {
 
     /* data from tun/tap: just read it and write it to the network */
     
-    nread = cread(tap_fd, buffer, BUFSIZE);
+    nread = read(tap_fd, buffer, BUFSIZE);
 
     tap2net++;
     do_debug("TAP2NET %lu: Read %d bytes from the tap interface\n", tap2net, nread);
 
     /* write length + packet */
-    plength = htons(nread);
-    nwrite = cwrite(net_fd, (char *)&plength, sizeof(plength));
-    nwrite = cwrite(net_fd, buffer, nread);
+    nwrite = write(net_fd, buffer, nread);
     
     do_debug("TAP2NET %lu: Written %d bytes to the network\n", tap2net, nwrite);
 
@@ -390,21 +388,13 @@ void net_read(int tap_fd, int net_fd) {
     /* data from the network: read it, and write it to the tun/tap interface. 
      * We need to read the length first, and then the packet */
 
-    /* Read length */      
-    nread = read_n(net_fd, (char *)&plength, sizeof(plength));
-    if(nread == 0) {
-      /* ctrl-c at the other end */
-      break;
-    }
-
-    net2tap++;
-
     /* read packet */
-    nread = read_n(net_fd, buffer, ntohs(plength));
+    nread = read(net_fd, buffer, sizeof(buffer));
+    net2tap++;
     do_debug("NET2TAP %lu: Read %d bytes from the network\n", net2tap, nread);
 
     /* now buffer[] contains a full packet or frame, write it into the tun/tap interface */ 
-    nwrite = cwrite(tap_fd, buffer, nread);
+    nwrite = write(tap_fd, buffer, nread);
     do_debug("NET2TAP %lu: Written %d bytes to the tap interface\n", net2tap, nwrite);
 
     // std::this_thread::yield();
