@@ -351,7 +351,7 @@ void net_read(int tap_fd, int net_fd) {
   fd_set rd_set_org;
   fd_set rd_set;
   FD_ZERO(&rd_set_org);
-  FD_SET(tap_fd, &rd_set_org);
+  FD_SET(net_fd, &rd_set_org);
   int maxfd = net_fd;
   unsigned long int net2tap = 0;
   uint16_t nread, nwrite, plength;
