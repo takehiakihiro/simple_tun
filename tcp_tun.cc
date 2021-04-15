@@ -261,13 +261,11 @@ int read_n(int fd, char *buf, int n) {
  * do_debug: prints debugging stuff (doh!)                                *
  **************************************************************************/
 void do_debug(const char *msg, ...){
-  
-  va_list argp;
-  
   if(debug) {
-	va_start(argp, msg);
-	vfprintf(stderr, msg, argp);
-	va_end(argp);
+    va_list argp;
+    va_start(argp, msg);
+    vfprintf(stderr, msg, argp);
+    va_end(argp);
   }
 }
 
@@ -275,9 +273,7 @@ void do_debug(const char *msg, ...){
  * my_err: prints custom error messages on stderr.                        *
  **************************************************************************/
 void my_err(const char *msg, ...) {
-
   va_list argp;
-  
   va_start(argp, msg);
   vfprintf(stderr, msg, argp);
   va_end(argp);
@@ -342,7 +338,7 @@ void tap_read(int tap_fd, int net_fd) {
     
     do_debug("TAP2NET %lu: Written %d bytes to the network\n", tap2net, nwrite);
 
-    std::this_thread::yield();
+    // std::this_thread::yield();
   }
 }
 
@@ -394,7 +390,7 @@ void net_read(int tap_fd, int net_fd) {
     nwrite = cwrite(tap_fd, buffer, nread);
     do_debug("NET2TAP %lu: Written %d bytes to the tap interface\n", net2tap, nwrite);
 
-    std::this_thread::yield();
+    // std::this_thread::yield();
   }
 }
 
