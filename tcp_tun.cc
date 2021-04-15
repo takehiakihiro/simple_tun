@@ -20,14 +20,9 @@
  * explicit. See the file LICENSE for further details.                    *
  *************************************************************************/ 
 
-#include <thread>
-#include <cstdio>
-#include <cstdlib>
-#include <cstring>
-#include <cerrno>
-#include <cstdarg>
-#include <cctype>
-
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include <unistd.h>
 #include <net/if.h>
 #include <linux/if_tun.h>
@@ -39,7 +34,10 @@
 #include <arpa/inet.h> 
 #include <sys/select.h>
 #include <sys/time.h>
+#include <errno.h>
+#include <stdarg.h>
 #include <sys/wait.h>
+#include <ctype.h>
 
 /* buffer for reading from tun/tap interface, must be >= 1500 */
 #define BUFSIZE 2000   
@@ -300,103 +298,6 @@ void usage(void) {
   exit(1);
 }
 
-/**
- *
- */
-void tap_read(int tap_fd, int net_fd) {
-  fd_set rd_set_org;
-  fd_set rd_set;
-  FD_ZERO(&rd_set_org);
-  FD_SET(tap_fd, &rd_set_org);
-  int maxfd = tap_fd;
-  unsigned long int tap2net = 0;
-  uint16_t nread, nwrite, plength;
-  char buffer[BUFSIZE];
-
-  while(1) {
-    int ret;
-    std::memcpy(&rd_set, &rd_set_org, sizeof(rd_set_org));
-
-    ret = select(maxfd + 1, &rd_set, NULL, NULL, NULL);
-
-    if (ret < 0 && errno == EINTR){
-      continue;
-    }
-
-    if (ret < 0) {
-      perror("select()");
-      exit(1);
-    }
-
-    /* data from tun/tap: just read it and write it to the network */
-    
-    nread = cread(tap_fd, buffer, BUFSIZE);
-
-    tap2net++;
-    do_debug("TAP2NET %lu: Read %d bytes from the tap interface\n", tap2net, nread);
-
-    /* write length + packet */
-    plength = htons(nread);
-    nwrite = cwrite(net_fd, (char *)&plength, sizeof(plength));
-    nwrite = cwrite(net_fd, buffer, nread);
-    
-    do_debug("TAP2NET %lu: Written %d bytes to the network\n", tap2net, nwrite);
-  }
-}
-
-/**
- *
- */
-void net_read(int tap_fd, int net_fd) {
-  fd_set rd_set_org;
-  fd_set rd_set;
-  FD_ZERO(&rd_set_org);
-  FD_SET(net_fd, &rd_set_org);
-  int maxfd = net_fd;
-  unsigned long int net2tap = 0;
-  uint16_t nread, nwrite, plength;
-  char buffer[BUFSIZE];
-
-  while(1) {
-    int ret;
-    std::memcpy(&rd_set, &rd_set_org, sizeof(rd_set_org));
-
-    ret = select(maxfd + 1, &rd_set, NULL, NULL, NULL);
-
-    if (ret < 0 && errno == EINTR){
-      continue;
-    }
-
-    if (ret < 0) {
-      perror("select()");
-      exit(1);
-    }
-
-    /* data from the network: read it, and write it to the tun/tap interface. 
-     * We need to read the length first, and then the packet */
-
-    /* Read length */      
-    nread = read_n(net_fd, (char *)&plength, sizeof(plength));
-    if(nread == 0) {
-      /* ctrl-c at the other end */
-      break;
-    }
-
-    net2tap++;
-
-    /* read packet */
-    nread = read_n(net_fd, buffer, ntohs(plength));
-    do_debug("NET2TAP %lu: Read %d bytes from the network\n", net2tap, nread);
-
-    /* now buffer[] contains a full packet or frame, write it into the tun/tap interface */ 
-    nwrite = cwrite(tap_fd, buffer, nread);
-    do_debug("NET2TAP %lu: Written %d bytes to the tap interface\n", net2tap, nwrite);
-  }
-}
-
-/**
- *
- */
 int main(int argc, char *argv[]) {
   
   int tap_fd, option;
@@ -404,6 +305,8 @@ int main(int argc, char *argv[]) {
   char if_name[IFNAMSIZ] = "";
   char ipaddr[128] = { 0 };
   int maxfd;
+  uint16_t nread, nwrite, plength;
+  char buffer[BUFSIZE];
   struct sockaddr_in local, remote;
   char remote_ip[16] = "";            /* dotted quad IP string */
   unsigned short int port = PORT;
@@ -538,11 +441,66 @@ int main(int argc, char *argv[]) {
     do_debug("SERVER: Client connected from %s\n", inet_ntoa(remote.sin_addr));
   }
   
-  std::thread tap_read_th(tap_read, tap_fd, net_fd);
-  std::thread net_read_th(net_read, tap_fd, net_fd);
-  tap_read_th.join();
-  net_read_th.join();
+  /* use select() to handle two descriptors at once */
+  maxfd = (tap_fd > net_fd)?tap_fd:net_fd;
 
+  while(1) {
+    int ret;
+    fd_set rd_set;
+
+    FD_ZERO(&rd_set);
+    FD_SET(tap_fd, &rd_set); FD_SET(net_fd, &rd_set);
+
+    ret = select(maxfd + 1, &rd_set, NULL, NULL, NULL);
+
+    if (ret < 0 && errno == EINTR){
+      continue;
+    }
+
+    if (ret < 0) {
+      perror("select()");
+      exit(1);
+    }
+
+    if(FD_ISSET(tap_fd, &rd_set)) {
+      /* data from tun/tap: just read it and write it to the network */
+      
+      nread = cread(tap_fd, buffer, BUFSIZE);
+
+      tap2net++;
+      do_debug("TAP2NET %lu: Read %d bytes from the tap interface\n", tap2net, nread);
+
+      /* write length + packet */
+      plength = htons(nread);
+      nwrite = cwrite(net_fd, (char *)&plength, sizeof(plength));
+      nwrite = cwrite(net_fd, buffer, nread);
+      
+      do_debug("TAP2NET %lu: Written %d bytes to the network\n", tap2net, nwrite);
+    }
+
+    if(FD_ISSET(net_fd, &rd_set)) {
+      /* data from the network: read it, and write it to the tun/tap interface. 
+       * We need to read the length first, and then the packet */
+
+      /* Read length */      
+      nread = read_n(net_fd, (char *)&plength, sizeof(plength));
+      if(nread == 0) {
+        /* ctrl-c at the other end */
+        break;
+      }
+
+      net2tap++;
+
+      /* read packet */
+      nread = read_n(net_fd, buffer, ntohs(plength));
+      do_debug("NET2TAP %lu: Read %d bytes from the network\n", net2tap, nread);
+
+      /* now buffer[] contains a full packet or frame, write it into the tun/tap interface */ 
+      nwrite = cwrite(tap_fd, buffer, nread);
+      do_debug("NET2TAP %lu: Written %d bytes to the tap interface\n", net2tap, nwrite);
+    }
+  }
+  
   return(0);
 }
 
