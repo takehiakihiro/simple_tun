@@ -32,3 +32,4 @@
 *.app
 
 tcp_tun
+udp_tun
