@@ -1,6 +1,3 @@
-CXXFLAGS += -pthread
-LDFLAGS += -pthread
-
 all: tcp_tun
 
 tcp_tun: tcp_tun.o
