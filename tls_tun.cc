@@ -309,7 +309,8 @@ int tls_read_n(int fd, SSL* ssl, char *buf, int n)
   int nread, left = n;
 
   while (left > 0) {
-    if ((nread = tls_cread(fd, ssl, buf, left)) == 0) {
+    nread = tls_cread(fd, ssl, buf, left);
+    if (nread == 0) {
       return 0 ;      
     }
     else {
@@ -317,7 +318,7 @@ int tls_read_n(int fd, SSL* ssl, char *buf, int n)
       buf += nread;
     }
   }
-  return n;  
+  return n;
 }
 
 /**************************************************************************
@@ -468,14 +469,13 @@ void net_read(int tap_fd, int net_fd, SSL* ssl)
       break;
     }
 
-    net2tap++;
-
     /* read packet */
     nread = tls_read_n(net_fd, ssl, buffer, ntohs(plength));
     if (nread == 0) {
       /* ctrl-c at the other end */
       break;
     }
+    net2tap++;
     do_debug("NET2TAP %lu: Read %d bytes from the network\n", net2tap, nread);
 
     /* now buffer[] contains a full packet or frame, write it into the tun/tap interface */ 
