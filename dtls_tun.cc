@@ -417,8 +417,6 @@ void tap_read(int tap_fd, int net_fd, SSL* ssl)
     do_debug("TAP2NET %lu: Read %d bytes from the tap interface\n", tap2net, nread);
 
     /* write length + packet */
-    plength = htons(nread);
-    nwrite = tls_cwrite(ssl, (char *)&plength, sizeof(plength));
     nwrite = tls_cwrite(ssl, buffer, nread);
 
     do_debug("TAP2NET %lu: Written %d bytes to the network\n", tap2net, nwrite);
@@ -459,17 +457,12 @@ void net_read(int tap_fd, int net_fd, SSL* ssl)
     /* data from the network: read it, and write it to the tun/tap interface. 
      * We need to read the length first, and then the packet */
 
-    /* Read length */      
-    nread = tls_read_n(net_fd, ssl, (char *)&plength, sizeof(plength));
-    if (nread == 0) {
-      /* ctrl-c at the other end */
+    /* read packet */
+    nread = tls_cread(net_fd, ssl, buffer, sizeof(buffer));
+    if (nread <= 0) {
       break;
     }
-
     net2tap++;
-
-    /* read packet */
-    nread = tls_read_n(net_fd, ssl, buffer, ntohs(plength));
     do_debug("NET2TAP %lu: Read %d bytes from the network\n", net2tap, nread);
 
     /* now buffer[] contains a full packet or frame, write it into the tun/tap interface */ 
