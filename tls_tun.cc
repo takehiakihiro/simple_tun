@@ -609,11 +609,12 @@ int main(int argc, char *argv[])
   socklen_t remotelen;
   int cliserv = -1;    /* must be specified on cmd line */
   unsigned long int tap2net = 0, net2tap = 0;
+  char cipher[256] = "ALL";
 
   progname = argv[0];
   
   /* Check command line options */
-  while ((option = getopt(argc, argv, "i:sc:p:uahdn:")) > 0) {
+  while ((option = getopt(argc, argv, "i:sc:p:uahdn:C:")) > 0) {
     switch (option) {
       case 'd':
         debug = 1;
@@ -642,6 +643,9 @@ int main(int argc, char *argv[])
         break;
       case 'a':
         flags = IFF_TAP | IFF_NO_PI;
+        break;
+      case 'C':
+        strncpy(cipher, optarg, 256);
         break;
       default:
         my_err("Unknown option %c\n", option);
@@ -721,12 +725,16 @@ int main(int argc, char *argv[])
     // サーバ証明書ファイルを設定
     if (SSL_CTX_use_certificate_chain_file(ssl_ctx, "server.crt") != 1) {
       perror("SSL_CTX_use_certificate_chain_file()");
+      char errbuff[256] = { 0 };
+      my_err("SSL_CTX_use_certificate_chain_file(): %s\n", ERR_error_string(ERR_get_error(), errbuff));
       exit(1);
     }
 
     // 秘密鍵ファイルを設定
     if (SSL_CTX_use_PrivateKey_file(ssl_ctx, "server.key", SSL_FILETYPE_PEM) != 1) {
       perror("SSL_CTX_use_PrivateKey_file()");
+      char errbuff[256] = { 0 };
+      my_err("SSL_CTX_use_PrivateKey_file(): %s\n", ERR_error_string(ERR_get_error(), errbuff));
       exit(1);
     }
   }
@@ -739,7 +747,7 @@ int main(int argc, char *argv[])
   // SSL_CTX_set_min_proto_version(ssl_ctx, 0);
   // SSL_CTX_set_max_proto_version(ssl_ctx, TLS1_2_VERSION);
 
-  if (SSL_CTX_set_cipher_list(ssl_ctx, "ALL") == 0) {
+  if (SSL_CTX_set_cipher_list(ssl_ctx, cipher) == 0) {
     perror("SSL_CTX_set_cipher_list()");
     exit(1);
   }
