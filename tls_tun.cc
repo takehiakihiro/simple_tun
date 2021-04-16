@@ -49,6 +49,7 @@
 #define CLIENT 0
 #define SERVER 1
 #define PORT 55555
+#define PRIME_LEN         512
 
 int debug;
 char *progname;
@@ -478,6 +479,120 @@ void net_read(int tap_fd, int net_fd, SSL* ssl)
 }
 
 /**
+ * ECDH curve
+ */
+static int set_ecdh_curve(SSL_CTX* ssl_ctx)
+{
+#if OPENSSL_VERSION_NUMBER >= 0x0090800fL
+#ifndef OPENSSL_NO_ECDH
+    /*
+     * Elliptic-Curve Diffie-Hellman parameters are either "named curves"
+     * from RFC 4492 section 5.1.1, or explicitly described curves over
+     * binary fields.  OpenSSL only supports the "named curves", which provide
+     * maximum interoperability.
+     */
+#if (defined SSL_CTX_set1_curves_list || defined SSL_CTRL_SET_CURVES_LIST)
+    /*
+     * OpenSSL 1.0.2+ allows configuring a curve list instead of a single
+     * curve previously supported.  By default an internal list is used,
+     * with prime256v1 being preferred by server in OpenSSL 1.0.2b+
+     * and X25519 in OpenSSL 1.1.0+.
+     *
+     * By default a curve preferred by the client will be used for
+     * key exchange.  The SSL_OP_CIPHER_SERVER_PREFERENCE option can
+     * be used to prefer server curves instead, similar to what it
+     * does for ciphers.
+     */
+    SSL_CTX_set_options(ssl_ctx, SSL_OP_SINGLE_ECDH_USE);
+
+#if SSL_CTRL_SET_ECDH_AUTO
+    /* not needed in OpenSSL 1.1.0+ */
+    SSL_CTX_set_ecdh_auto(ssl_ctx, 1);
+#endif
+    return 0;
+
+#else
+    int      nid;
+    char    *curve;
+    EC_KEY  *ecdh;
+
+    curve = "prime256v1";
+    nid = OBJ_sn2nid(curve);
+    if (nid == 0) {
+        my_err("failed OBJ_sn2nid.");
+        return -1;
+    }
+
+    ecdh = EC_KEY_new_by_curve_name(nid);
+    if (ecdh == NULL) {
+        my_err("failed EC_KEY_new_by_curve_name.");
+        return -1;
+    }
+
+    SSL_CTX_set_options(ssl_ctx, SSL_OP_SINGLE_ECDH_USE);
+    SSL_CTX_set_tmp_ecdh(ssl_ctx, ecdh);
+    EC_KEY_free(ecdh);
+#endif
+#endif
+#endif
+
+    return 0;
+}
+
+/**
+ *
+ */
+static DH *create_dhparam(void)
+{
+    DH *dh = NULL;
+    int dh_code;
+
+    // DHパラメータの生成
+    dh = DH_new();
+    if (dh == NULL) {
+        return NULL;
+    }
+    if (DH_generate_parameters_ex(dh, PRIME_LEN, DH_GENERATOR_5, NULL) == 0) {
+        DH_free(dh);
+        return NULL;
+    }
+    // DHパラメータのチェック
+    if (DH_check(dh, &dh_code) == 0) {
+        DH_free(dh);
+        return NULL;
+    }
+    if (dh_code != 0) {
+        DH_free(dh);
+        return NULL;
+    }
+
+    return dh;
+}
+
+/**
+ *
+ */
+static int set_dhparam(SSL_CTX* ssl_ctx)
+{
+    DH *dh = NULL;
+    BIO *bio = NULL;
+
+    dh = create_dhparam();
+    if (dh == NULL) {
+        my_err("could not create temporary dh parameter.");
+        return -1;
+    }
+
+    SSL_CTX_set_tmp_dh(ssl_ctx, dh);
+    DH_free(dh);
+    if (bio != NULL) {
+        BIO_free(bio);
+    }
+
+    return 0;
+}
+
+/**
  *
  */
 int main(int argc, char *argv[])
@@ -643,6 +758,29 @@ int main(int argc, char *argv[])
   }
   else {
     /* Server, wait for connections */
+
+    // DH
+    if (set_dhparam(ssl_ctx) < 0) {
+      exit(1);
+    }
+
+    // ECDH
+    if (set_ecdh_curve(ssl_ctx) < 0) {
+      exit(1);
+    }
+
+    // サーバ証明書ファイルを設定
+    if (SSL_CTX_use_certificate_chain_file(ssl_ctx, "server.crt") != 1) {
+      perror("SSL_CTX_use_certificate_chain_file()");
+      exit(1);
+    }
+
+    // 秘密鍵ファイルを設定
+    if (SSL_CTX_use_PrivateKey_file(ssl_ctx, "server.key", SSL_FILETYPE_PEM) != 1) {
+      perror("SSL_CTX_use_PrivateKey_file()");
+      exit(1);
+    }
+
 
     /* avoid EADDRINUSE error on bind() */
     if(setsockopt(sock_fd, SOL_SOCKET, SO_REUSEADDR, (char *)&optval, sizeof(optval)) < 0) {
