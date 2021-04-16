@@ -1,7 +1,7 @@
 CXXFLAGS += -pthread
 LDFLAGS += -pthread
 
-TARGET = tcp_tun udp_tun tls_tun
+TARGET = tcp_tun udp_tun tls_tun dtls_tun
 
 all: $(TARGET)
 
@@ -12,6 +12,9 @@ udp_tun: udp_tun.o
 	$(CXX) $(LDFLAGS) -o $@ $^
 
 tls_tun: tls_tun.o
+	$(CXX) $(LDFLAGS) -o $@ $^ -lssl -lcrypto
+
+dtls_tun: dtls_tun.o
 	$(CXX) $(LDFLAGS) -o $@ $^ -lssl -lcrypto
 
 clean:
