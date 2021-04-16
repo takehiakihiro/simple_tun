@@ -57,6 +57,7 @@ char *progname;
 void my_err(const char *msg, ...);
 void do_debug(const char *msg, ...);
 
+
 /**************************************************************************
  * tun_alloc: allocates or reconnects to a tun/tap device. The caller     *
  *            must reserve enough space in *dev.                          *

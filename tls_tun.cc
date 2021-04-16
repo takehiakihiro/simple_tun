@@ -57,6 +57,7 @@ char *progname;
 void my_err(const char *msg, ...);
 void do_debug(const char *msg, ...);
 
+
 /**************************************************************************
  * tun_alloc: allocates or reconnects to a tun/tap device. The caller     *
  *            must reserve enough space in *dev.                          *
@@ -687,6 +688,7 @@ int main(int argc, char *argv[])
   do_debug("Successfully connected to interface %s\n", if_name);
 
 
+  // openssl initialize
   if (OPENSSL_init_ssl(OPENSSL_INIT_LOAD_CONFIG, NULL) == 0) {
     my_err("OPENSSL_init_ssl failed");
     exit(1);
