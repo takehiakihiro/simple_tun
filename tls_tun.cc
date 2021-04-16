@@ -244,6 +244,8 @@ int tls_cread(int fd, SSL* ssl, char *buf, int n)
       }
       else {
         my_err("SSL_read(): err=%d\n", ssl_err);
+        char errbuff[256] = { 0 };
+        my_err("SSL_read(): %s\n", ERR_error_string(ERR_get_error(), errbuff));
         return 0;
       }
     }
