@@ -696,9 +696,39 @@ int main(int argc, char *argv[])
 
 
   SSL_CTX *ssl_ctx = nullptr;
-  if ((ssl_ctx = SSL_CTX_new(TLS_method())) == nullptr) {
-    perror("SSL_CTX_new()");
-    exit(1);
+  if (cliserv == CLIENT) {
+    if ((ssl_ctx = SSL_CTX_new(TLS_client_method())) == nullptr) {
+      perror("SSL_CTX_new()");
+      exit(1);
+    }
+  }
+  else {
+    if ((ssl_ctx = SSL_CTX_new(TLS_server_method())) == nullptr) {
+      perror("SSL_CTX_new()");
+      exit(1);
+    }
+
+    // DH
+    if (set_dhparam(ssl_ctx) < 0) {
+      exit(1);
+    }
+
+    // ECDH
+    if (set_ecdh_curve(ssl_ctx) < 0) {
+      exit(1);
+    }
+
+    // サーバ証明書ファイルを設定
+    if (SSL_CTX_use_certificate_chain_file(ssl_ctx, "server.crt") != 1) {
+      perror("SSL_CTX_use_certificate_chain_file()");
+      exit(1);
+    }
+
+    // 秘密鍵ファイルを設定
+    if (SSL_CTX_use_PrivateKey_file(ssl_ctx, "server.key", SSL_FILETYPE_PEM) != 1) {
+      perror("SSL_CTX_use_PrivateKey_file()");
+      exit(1);
+    }
   }
 
   SSL_CTX_set_options(ssl_ctx, SSL_OP_ALL);
@@ -760,29 +790,6 @@ int main(int argc, char *argv[])
   }
   else {
     /* Server, wait for connections */
-
-    // DH
-    if (set_dhparam(ssl_ctx) < 0) {
-      exit(1);
-    }
-
-    // ECDH
-    if (set_ecdh_curve(ssl_ctx) < 0) {
-      exit(1);
-    }
-
-    // サーバ証明書ファイルを設定
-    if (SSL_CTX_use_certificate_chain_file(ssl_ctx, "server.crt") != 1) {
-      perror("SSL_CTX_use_certificate_chain_file()");
-      exit(1);
-    }
-
-    // 秘密鍵ファイルを設定
-    if (SSL_CTX_use_PrivateKey_file(ssl_ctx, "server.key", SSL_FILETYPE_PEM) != 1) {
-      perror("SSL_CTX_use_PrivateKey_file()");
-      exit(1);
-    }
-
 
     /* avoid EADDRINUSE error on bind() */
     if(setsockopt(sock_fd, SOL_SOCKET, SO_REUSEADDR, (char *)&optval, sizeof(optval)) < 0) {
