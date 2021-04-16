@@ -636,7 +636,7 @@ int main(int argc, char *argv[])
       perror("SSL_set_fd()");
       exit(1);
     }
-    if (SSL_connect(ssl) <= 0) {
+    if (SSL_connect(ssl) < 0) {
       perror("SSL_connect()");
       exit(1);
     }
@@ -686,7 +686,7 @@ int main(int argc, char *argv[])
       perror("SSL_set_fd()");
       exit(1);
     }
-    if (SSL_accept(ssl) <= 0) {
+    if (SSL_accept(ssl) < 0) {
       perror("SSL_accept()");
       exit(1);
     }
