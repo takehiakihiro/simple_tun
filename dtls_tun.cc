@@ -783,10 +783,10 @@ int main(int argc, char *argv[])
     }
   }
 
-  SSL_CTX_set_options(ssl_ctx, SSL_OP_ALL);
-  SSL_CTX_clear_options(ssl_ctx, SSL_OP_NO_SSLv2|SSL_OP_NO_SSLv3|SSL_OP_NO_TLSv1);
-  SSL_CTX_set_options(ssl_ctx, SSL_OP_NO_SSLv2);
-  SSL_CTX_set_options(ssl_ctx, SSL_OP_NO_SSLv3);
+  // SSL_CTX_set_options(ssl_ctx, SSL_OP_ALL);
+  // SSL_CTX_clear_options(ssl_ctx, SSL_OP_NO_SSLv2|SSL_OP_NO_SSLv3|SSL_OP_NO_TLSv1);
+  // SSL_CTX_set_options(ssl_ctx, SSL_OP_NO_SSLv2);
+  // SSL_CTX_set_options(ssl_ctx, SSL_OP_NO_SSLv3);
 
   // SSL_CTX_set_min_proto_version(ssl_ctx, 0);
   // SSL_CTX_set_max_proto_version(ssl_ctx, TLS1_2_VERSION);
@@ -834,7 +834,6 @@ int main(int argc, char *argv[])
     do_debug("CLIENT: Connected to server %s\n", inet_ntoa(remote.sin_addr));
     
     if (SSL_connect(ssl) < 0) {
-      perror("SSL_connect()");
       char errbuff[256] = { 0 };
       my_err("SSL_connect(): %s\n", ERR_error_string(ERR_get_error(), errbuff));
       exit(1);
