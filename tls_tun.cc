@@ -753,6 +753,8 @@ int main(int argc, char *argv[])
     }
     if (SSL_connect(ssl) < 0) {
       perror("SSL_connect()");
+      char errbuff[256] = { 0 };
+      my_err("SSL_connect(): %s\n", ERR_error_string(ERR_get_error(), errbuff));
       exit(1);
     }
   }
@@ -824,8 +826,10 @@ int main(int argc, char *argv[])
       perror("SSL_set_fd()");
       exit(1);
     }
-    if (SSL_accept(ssl) < 0) {
+    if (SSL_accept(ssl) <= 0) {
       perror("SSL_accept()");
+      char errbuff[256] = { 0 };
+      my_err("SSL_accept(): %s\n", ERR_error_string(ERR_get_error(), errbuff));
       exit(1);
     }
   }
