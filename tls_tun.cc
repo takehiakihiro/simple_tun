@@ -472,6 +472,10 @@ void net_read(int tap_fd, int net_fd, SSL* ssl)
 
     /* read packet */
     nread = tls_read_n(net_fd, ssl, buffer, ntohs(plength));
+    if (nread == 0) {
+      /* ctrl-c at the other end */
+      break;
+    }
     do_debug("NET2TAP %lu: Read %d bytes from the network\n", net2tap, nread);
 
     /* now buffer[] contains a full packet or frame, write it into the tun/tap interface */ 
