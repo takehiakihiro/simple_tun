@@ -242,8 +242,7 @@ int tls_cread(int fd, SSL* ssl, char *buf, int n)
         select(fd + 1, NULL, &rd_set, NULL, NULL);
       }
       else {
-        char errbuff[256] = { 0 };
-        my_err("SSL_read(): %s\n", ERR_error_string(ssl_err, errbuff));
+        my_err("SSL_read(): err=%d\n", ssl_err);
         return 0;
       }
     }
@@ -277,8 +276,7 @@ int tls_cwrite(SSL* ssl, char *buf, int n)
 
   if ((nwrite=SSL_write(ssl, buf, n)) < 0){
     int ssl_err = SSL_get_error(ssl, nwrite);
-    char errbuff[256] = { 0 };
-    my_err("SSL_read(): %s\n", ERR_error_string(ssl_err, errbuff));
+    my_err("SSL_write(): err=%d\n", ssl_err);
     exit(1);
   }
   return nwrite;
