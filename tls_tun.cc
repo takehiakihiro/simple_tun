@@ -622,11 +622,13 @@ int main(int argc, char *argv[])
 
     net_fd = sock_fd;
 
+#if 0
     int sock_opt_int = 1;
     if (setsockopt(net_fd, IPPROTO_TCP, O_NDELAY, &sock_opt_int, sizeof(sock_opt_int)) < 0) {
       perror("setsockopt(TCP_NODELAY)");
       exit(1);
     }
+#endif
 
     do_debug("CLIENT: Connected to server %s\n", inet_ntoa(remote.sin_addr));
     
@@ -670,11 +672,13 @@ int main(int argc, char *argv[])
       exit(1);
     }
 
+#if 0
     int sock_opt_int = 1;
     if (setsockopt(net_fd, IPPROTO_TCP, O_NDELAY, &sock_opt_int, sizeof(sock_opt_int)) < 0) {
       perror("setsockopt(TCP_NODELAY)");
       exit(1);
     }
+#endif
 
     do_debug("SERVER: Client connected from %s\n", inet_ntoa(remote.sin_addr));
 
