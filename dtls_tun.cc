@@ -805,6 +805,8 @@ int main(int argc, char *argv[])
   if (cliserv == CLIENT) {
     /* Client, try to connect to server */
 
+    BIO* bio = BIO_new_dgram(sock_fd, BIO_CLOSE);
+
     /* assign the destination address */
     memset(&remote, 0, sizeof(remote));
     remote.sin_family = AF_INET;
@@ -816,6 +818,8 @@ int main(int argc, char *argv[])
       perror("connect()");
       exit(1);
     }
+    BIO_ctrl(bio, BIO_CTRL_DGRAM_SET_CONNECTED, 0, (struct sockaddr*)&remote);
+    SSL_set_bio(ssl, bio, bio);
 
     net_fd = sock_fd;
 
@@ -829,10 +833,6 @@ int main(int argc, char *argv[])
 
     do_debug("CLIENT: Connected to server %s\n", inet_ntoa(remote.sin_addr));
     
-    if (SSL_set_fd(ssl, net_fd) == 0) {
-      perror("SSL_set_fd()");
-      exit(1);
-    }
     if (SSL_connect(ssl) < 0) {
       perror("SSL_connect()");
       char errbuff[256] = { 0 };
