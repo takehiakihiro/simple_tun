@@ -581,7 +581,7 @@ int main(int argc, char *argv[])
 
 
   SSL_CTX *ssl_ctx = nullptr;
-  if ((ssl_ctx = SSL_CTX_new(SSLv23_method())) == nullptr) {
+  if ((ssl_ctx = SSL_CTX_new(TLS_method())) == nullptr) {
     perror("SSL_CTX_new()");
     exit(1);
   }
@@ -591,8 +591,8 @@ int main(int argc, char *argv[])
   SSL_CTX_set_options(ssl_ctx, SSL_OP_NO_SSLv2);
   SSL_CTX_set_options(ssl_ctx, SSL_OP_NO_SSLv3);
 
-  SSL_CTX_set_min_proto_version(ssl_ctx, 0);
-  SSL_CTX_set_max_proto_version(ssl_ctx, TLS1_2_VERSION);
+  // SSL_CTX_set_min_proto_version(ssl_ctx, 0);
+  // SSL_CTX_set_max_proto_version(ssl_ctx, TLS1_2_VERSION);
 
   if (SSL_CTX_set_cipher_list(ssl_ctx, "ALL") == 0) {
     perror("SSL_CTX_set_cipher_list()");

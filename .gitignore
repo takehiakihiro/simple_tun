@@ -33,3 +33,5 @@
 
 tcp_tun
 udp_tun
+tls_tun
+dtls_tun
