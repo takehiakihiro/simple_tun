@@ -52,6 +52,26 @@ char *progname;
 
 void my_err(const char *msg, ...);
 
+/**
+ *
+ */
+void dump_out(const char* buffer, size_t len)
+{
+  size_t offset = 0;
+  while (offset < len) {
+    for (uint16_t i = 0; i < 16; i++) {
+      uint8_t data = buffer[offset + i];
+      printf("%02x ", data);	//0で埋める、2桁、16進
+      if ((offset + i) >= len) {
+        printf("\n");
+        return;
+      }
+    }
+    printf("\n");
+    offset += 16;
+  }
+}
+
 /**************************************************************************
  * tun_alloc: allocates or reconnects to a tun/tap device. The caller     *
  *            must reserve enough space in *dev.                          *
@@ -327,6 +347,7 @@ void tap_read(int tap_fd, int net_fd) {
     /* data from tun/tap: just read it and write it to the network */
     
     nread = cread(tap_fd, buffer, BUFSIZE);
+    dump_out(buffer, nread);
 
     tap2net++;
     do_debug("TAP2NET %lu: Read %d bytes from the tap interface\n", tap2net, nread);
