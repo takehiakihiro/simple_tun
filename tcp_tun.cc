@@ -57,6 +57,9 @@ void my_err(const char *msg, ...);
  */
 void dump_out(const char* buffer, size_t len)
 {
+  if (!debug) {
+    return;
+  }
   size_t offset = 0;
   while (offset < len) {
     for (uint16_t i = 0; i < 16; i++) {
