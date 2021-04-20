@@ -212,6 +212,23 @@ int set_ip(const char *dev_name, const char *ipaddr)
     return -1;
   }
 
+  // ip link set tun10 mtu 1400
+  argv[0] = "ip";
+  argv[1] = "link";
+  argv[2] = "set";
+  argv[3] = dev_name;
+  argv[4] = "mtu";
+  argv[5] = "1450";
+  argv[6] = NULL;
+
+  if (exec_command(&status, "ip", (char *const *) argv) < 0) {
+    return -1;
+  }
+  if (status != 0) {
+    my_err("ip link set mtu status is %d\n", status);
+    return -1;
+  }
+
   // ip link set tun10 up
   argv[0] = "ip";
   argv[1] = "link";
