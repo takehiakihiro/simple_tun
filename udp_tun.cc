@@ -813,6 +813,8 @@ int main(int argc, char* argv[])
           exit(1);
         }
 
+        do_debug("remote=%s\n", remote_endpoint.address().to_string().c_str());
+
         asio::ip::udp::socket client_sock{ ioc };
         client_sock.set_option(asio::ip::udp::socket::reuse_address(true));
         client_sock.bind(asio::ip::udp::endpoint(asio::ip::udp::v4(), port));
