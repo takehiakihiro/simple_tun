@@ -803,9 +803,9 @@ int main(int argc, char* argv[])
     // server
     asio::spawn([&buff, &ioc, &net_sock, &remote_ip, &port](asio::yield_context yield)
       {
-        asio::ip::udp::socket acceptor{ ioc, asio::ip::udp::endpoint(asio::ip::udp::v4(), port) };
-        acceptor.set_option(asio::ip::udp::socket::reuse_address(true));
         boost::system::error_code ec;
+        asio::ip::udp::socket acceptor{ ioc, asio::ip::udp::endpoint(asio::ip::udp::v4(), port) };
+        acceptor.set_option(asio::ip::udp::socket::reuse_address(true), ec);
         asio::ip::udp::endpoint remote_endpoint;
         acceptor.async_receive_from(asio::buffer(buff), remote_endpoint, yield[ec]);
         if (ec) {
@@ -816,7 +816,7 @@ int main(int argc, char* argv[])
         do_debug("remote=%s\n", remote_endpoint.address().to_string().c_str());
 
         asio::ip::udp::socket client_sock{ ioc };
-        client_sock.set_option(asio::ip::udp::socket::reuse_address(true));
+        client_sock.set_option(asio::ip::udp::socket::reuse_address(true), ec);
         client_sock.bind(asio::ip::udp::endpoint(asio::ip::udp::v4(), port));
         client_sock.async_connect(remote_endpoint, yield[ec]);
         net_sock = std::move(client_sock);
