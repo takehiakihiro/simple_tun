@@ -826,6 +826,8 @@ int main(int argc, char* argv[])
 
   ioc.run();
 
+  my_err("handshaked\n");
+
   bool finish = false;
 
   // start to read from tap
