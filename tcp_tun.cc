@@ -776,10 +776,20 @@ int main(int argc, char *argv[])
 
   asio::ip::tcp::socket net_sock{ ioc };
   boost::system::error_code ec;
-  net_sock.connect(asio::ip::tcp::endpoint(asio::ip::address::from_string(remote_ip), port), ec);
-  if (ec) {
-    my_err("Failed to connect server %s\n", ec.message().c_str());
-    exit(1);
+
+  if (cliserv == CLIENT) {
+    // client
+    net_sock.connect(asio::ip::tcp::endpoint(asio::ip::address::from_string(remote_ip), port), ec);
+    if (ec) {
+      my_err("Failed to connect server %s\n", ec.message().c_str());
+      exit(1);
+    }
+  }
+  else {
+    // server
+    asio::ip::tcp::acceptor acceptor{ ioc, asio::ip::tcp::endpoint(asio::ip::tcp::v4(), port) };
+    auto client_sock = acceptor.accept();
+    net_sock = std::move(client_sock);
   }
 
   bool finish = false;
