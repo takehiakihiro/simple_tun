@@ -911,10 +911,8 @@ int main(int argc, char* argv[])
   );
 
   asio::signal_set signals(ioc, SIGINT);
-  asio::spawn([&](asio::yield_context yield)
+  signals.async_wait([&net_sock, &finish, &tap_device](const boost::system::error_code& err, int signum)
     {
-      signals.async_wait(yield[ec]);
-
       finish = true;
       net_sock.close(ec);
       net_sock.cancel(ec);
