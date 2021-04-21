@@ -804,7 +804,7 @@ int main(int argc, char* argv[])
   }
   else {
     // server
-    asio::spawn([&handshaked, &buff, &ioc, &net_sock, &remote_ip, &port](asio::yield_context yield)
+    asio::spawn([&timer, &buff, &ioc, &net_sock, &remote_ip, &port](asio::yield_context yield)
       {
         do_debug("start server\n");
         boost::system::error_code ec;
