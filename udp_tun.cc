@@ -18,9 +18,19 @@
  * purposes, and can be used in the hope that is useful, but everything   *
  * is to be taken "as is" and without any kind of warranty, implicit or   *
  * explicit. See the file LICENSE for further details.                    *
- *************************************************************************/ 
+ *************************************************************************/
 
 #include <thread>
+#include <functional>
+#include <mutex>
+#include <chrono>
+
+#include <boost/format.hpp>
+#include <boost/asio.hpp>
+#include <boost/asio/bind_executor.hpp>
+#include <boost/asio/windows/object_handle.hpp>
+#include <boost/asio/spawn.hpp>
+
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -28,41 +38,360 @@
 #include <cstdarg>
 #include <cctype>
 
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#ifdef _WIN32
+#define _WINSOCK_DEPRECATED_NO_WARNINGS
+#include <winsock2.h>
+#include <Windows.h>
+#include <SetupAPI.h>
+#else
 #include <unistd.h>
 #include <net/if.h>
 #include <linux/if_tun.h>
-#include <sys/types.h>
 #include <sys/socket.h>
 #include <sys/ioctl.h>
-#include <sys/stat.h>
-#include <fcntl.h>
 #include <arpa/inet.h> 
 #include <sys/select.h>
 #include <sys/time.h>
 #include <sys/wait.h>
+#endif
 
-/* buffer for reading from tun/tap interface, must be >= 1500 */
-#define BUFSIZE 10000   
+ /* buffer for reading from tun/tap interface, must be >= 1500 */
+#define BUFSIZE 2000   
 #define CLIENT 0
 #define SERVER 1
 #define PORT 55555
 
 int debug;
-char *progname;
+char* progname;
 
-void my_err(const char *msg, ...);
+void my_err(const char* msg, ...);
+void do_debug(const char* msg, ...);
 
+namespace asio = boost::asio;
+
+#ifdef _WIN32
+
+typedef int socklen_t;
+
+std::mutex tun_lock;
+
+char* optarg = NULL;
+int optind = 1;
+
+static int getopt(int argc, char* const argv[], const char* optstring)
+{
+  if ((optind >= argc) || (argv[optind][0] != '-') || (argv[optind][0] == 0)) {
+    return -1;
+  }
+
+  int opt = argv[optind][1];
+  const char* p = strchr(optstring, opt);
+
+  if (p == NULL) {
+    return '?';
+  }
+  if (p[1] == ':') {
+    optind++;
+    if (optind >= argc) {
+      return '?';
+    }
+    optarg = argv[optind];
+    optind++;
+  }
+  else {
+    optind++;
+  }
+  return opt;
+}
+
+/**
+ * デバイス情報を取得する
+ */
+static HDEVINFO get_device_info(void)
+{
+  BOOL bRet;
+  HDEVINFO hDev;
+  GUID ClassGUID;
+  DWORD reqSize;
+
+  // "Net"クラスのGUIDを取得する
+  for (size_t loop = 0; loop < 10; loop++) {
+    // 10回リトライを行い、それでも駄目ならエラーとみなす
+    bRet = SetupDiClassGuidsFromNameW(L"Net", &ClassGUID, 1, &reqSize);
+    if (TRUE == bRet) {
+      break;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+  }
+  if (bRet == FALSE) {
+    my_err("error occurred SetupDiClassGuidsFromNameW %d\n", GetLastError());
+    return INVALID_HANDLE_VALUE;
+  }
+
+  // デバイス情報セットを取得する
+  hDev = SetupDiGetClassDevsW(&ClassGUID, NULL, NULL, DIGCF_PRESENT);
+  if (hDev == INVALID_HANDLE_VALUE) {
+    // エラー
+    my_err("error occurred SetupDiGetClassDevsW %d\n", GetLastError());
+    return INVALID_HANDLE_VALUE;
+  }
+
+  return hDev;
+}
+
+/**
+ * hardware idからデバイス情報を検索し、対象のデバイスに対し操作を行う
+ */
+static bool enum_hardware_id(const char* hwid,
+  std::function< bool(HDEVINFO DeviceInfoSet, const PSP_DEVINFO_DATA DeviceInfoData) > func)
+{
+  HDEVINFO hDev;
+  DWORD nIndex = 0;
+  SP_DEVINFO_DATA DeviceInfoData;
+  char buffer[256];
+  DWORD reqSize, dataType;
+  bool found = false;
+
+  hDev = get_device_info();
+
+  DeviceInfoData.cbSize = sizeof(SP_DEVINFO_DATA);
+
+  // デバイス情報セットの取得
+  std::string target_hardware_id(hwid);
+  while (SetupDiEnumDeviceInfo(hDev, nIndex, &DeviceInfoData)) {
+    nIndex++;
+    memset(buffer, 0, sizeof(buffer));
+    BOOL bRet = SetupDiGetDeviceRegistryPropertyA(hDev, &DeviceInfoData,
+      SPDRP_HARDWAREID, &dataType, (BYTE*)buffer, sizeof(buffer) - 1, &reqSize);
+    if (bRet == TRUE) {
+      std::string enum_hardware_id(buffer);
+      do_debug("target = %s, enum hardwareid = %s\n", target_hardware_id.c_str(), enum_hardware_id.c_str());
+      if (_stricmp(target_hardware_id.c_str(), enum_hardware_id.c_str()) == 0) {
+        // 指定のデバイス情報発見
+        do_debug("found\n");
+        found = func(hDev, &DeviceInfoData);
+        break;
+      }
+    }
+  }
+
+  if (!found) {
+    do_debug("device is not found\n");
+  }
+
+  return found;
+}
+
+/**
+ * レジストリの値を取得する
+ */
+static bool read_config_device(HDEVINFO DeviceInfoSet,
+  PSP_DEVINFO_DATA DeviceInfoData, const char* pszValueName,
+  char* buffer, size_t buffer_size)
+{
+  HKEY hKey;
+  LONG lRet;
+  bool bRet;
+  DWORD dwSize = buffer_size;
+  DWORD dwType;
+
+  // レジストリのオープン
+  hKey = SetupDiOpenDevRegKey(DeviceInfoSet, DeviceInfoData,
+    DICS_FLAG_GLOBAL, 0, DIREG_DRV, KEY_READ);
+  if (hKey == INVALID_HANDLE_VALUE) {
+    my_err("error occurred SetupDiOpenDevRegKey %d\n", GetLastError());
+    return false;
+  }
+
+  // レジストリエントリのデータを取得
+  lRet = RegQueryValueExA(hKey, pszValueName, 0, &dwType, (BYTE*)buffer, &dwSize);
+  if (lRet == ERROR_SUCCESS) {
+    bRet = true;
+  }
+  else {
+    my_err("error occurred RegQueryValueExA %d\n", GetLastError());
+    bRet = false;
+  }
+
+  // レジストリクローズ
+  RegCloseKey(hKey);
+
+  return bRet;
+}
+
+/**
+ * デバイスのインスタンスIDを取得する
+ */
+static bool get_device_instance_id(HDEVINFO DeviceInfoSet,
+  const PSP_DEVINFO_DATA DeviceInfoData, char* instance_id,
+  size_t instance_id_size)
+{
+  // デバイスプロパティ取得
+  return read_config_device(DeviceInfoSet,
+    DeviceInfoData, "NetCfgInstanceId", instance_id, instance_id_size);
+}
+
+/**
+ * インターフェイスの名前を取得する
+ */
+static bool get_interface_name(const char* instance_id,
+  char* interface_name, size_t interface_name_size)
+{
+  HKEY hkey;
+  LSTATUS status;
+  bool ret = false;
+  char keyname[256];
+
+  sprintf_s(keyname, sizeof(keyname),
+    "SYSTEM\\CurrentControlSet\\Control\\Network\\{4D36E972-E325-11CE-BFC1-08002BE10318}\\%s\\Connection",
+    instance_id);
+
+  status = RegCreateKeyExA(HKEY_LOCAL_MACHINE,
+    keyname, 0, nullptr, REG_OPTION_NON_VOLATILE, KEY_READ, nullptr, &hkey, nullptr);
+  if (ERROR_SUCCESS != status) {
+    my_err("error occurred RegCreateKeyExA %d\n", GetLastError());
+    return false;
+  }
+
+  DWORD dwSize = interface_name_size - 1;
+  DWORD dwType = REG_SZ;
+
+  memset(interface_name, 0, interface_name_size);
+  status = RegQueryValueExA(hkey, "Name", nullptr, &dwType, (LPBYTE)interface_name, &dwSize);
+  if ((status == ERROR_SUCCESS) && (dwType == REG_SZ)) {
+    ret = true;
+  }
+  else {
+    my_err("error occurred RegQueryValueExA %d\n", GetLastError());
+  }
+
+  RegCloseKey(hkey);
+  return ret;
+}
+
+static std::tuple<std::string, std::string> tun_alloc(const std::string& hardware_id)
+{
+  // instance id と interface nameを取得しておく
+  char instanceid[256] = { 0 };
+  auto ret = enum_hardware_id(hardware_id.c_str(),
+    std::bind(get_device_instance_id, std::placeholders::_1, std::placeholders::_2,
+      instanceid, sizeof(instanceid)));
+  if (!ret) {
+    // error handling
+    my_err("error occurred enum_hardware_id(get_device_instance_id)\n");
+    return std::make_tuple(std::string(), std::string());
+  }
+  std::string instance_id{ instanceid };
+  do_debug("instance id=%s\n", instance_id.c_str());
+
+  char interface_name_[256] = { 0 };
+  if (!get_interface_name(instanceid, interface_name_, sizeof(interface_name_) - 1)) {
+    // error handling
+    my_err("error occurred get_interface_name\n");
+    return std::make_tuple(std::string(), std::string());
+  }
+  std::string interface_name{ interface_name_ };
+  do_debug("interface name=%s\n", interface_name.c_str());
+  return std::make_tuple(interface_name, instance_id);
+}
+
+/**
+ * アドレスを設定するためのnetshコマンド文字列を生成する
+ */
+static std::string generate_to_set_address_commandline(
+  const std::string& address, const std::string& interface_name)
+{
+  std::stringstream ss;
+  std::string ipstr{ "ipv4" };
+
+  {
+    auto setaddress = address;
+    if (setaddress.find('/') == std::string::npos) {
+      setaddress += "/32";
+    }
+    ss << "netsh interface " << ipstr
+      << " set address \"" << interface_name << "\" static " << setaddress
+      << " store=active";
+  }
+
+  return ss.str();
+}
+
+/**
+ * プロセス生成
+ */
+static bool start_process(const std::string& commandline)
+{
+  do_debug("command line=[%s]\n", commandline.c_str());
+
+  PROCESS_INFORMATION pi = {};
+  STARTUPINFOA si = {};
+  std::string cl(commandline);
+  si.cb = sizeof(si);
+  BOOL ret = CreateProcessA(nullptr, &cl[0], nullptr, nullptr,
+    FALSE, NORMAL_PRIORITY_CLASS, nullptr, nullptr, &si, &pi);
+  if (FALSE == ret) {
+    return false;
+  }
+  WaitForSingleObject(pi.hProcess, INFINITE);
+  return true;
+}
+
+/**
+ * 非同期でコマンドラインを実行する
+ */
+static bool exec_proc(const std::string& commandline)
+{
+  return start_process(commandline);
+}
+
+/**
+ * 非同期で仮想NICにアドレスなどを設定する
+ */
+static int set_address(const std::string& address, const std::string& interface_name)
+{
+  // IPv4アドレスを仮想NICに設定する
+  exec_proc(generate_to_set_address_commandline(address, interface_name));
+  return 0;
+}
+
+/**
+ * 仮想NICをオープンする
+ */
+static HANDLE vnic_open(const std::string& device_name_prefix, const std::string& instance_id)
+{
+  // ドライバをオープン(これでインターフェイスは接続状態になる)
+  char device_name[256];
+  sprintf_s(device_name, sizeof(device_name),
+    "\\\\.\\Global\\%s%s", device_name_prefix.c_str(), instance_id.c_str());
+  do_debug("opened device name=%s\n", device_name);
+  HANDLE handle = CreateFileA(device_name, GENERIC_READ | GENERIC_WRITE,
+    0, 0, OPEN_EXISTING, FILE_FLAG_OVERLAPPED, 0);
+  if (INVALID_HANDLE_VALUE == handle) {
+    // error handling
+    my_err("error occurred CreateFileA(%s), err=%d\n", device_name, GetLastError());
+    return nullptr;
+  }
+  do_debug("opened device\n");
+
+  return handle;
+}
+
+#else
 /**************************************************************************
  * tun_alloc: allocates or reconnects to a tun/tap device. The caller     *
  *            must reserve enough space in *dev.                          *
  **************************************************************************/
-int tun_alloc(char *dev, int flags) {
+static int tun_alloc(char* dev, int flags) {
 
   struct ifreq ifr;
   int fd, err;
-  const char *clonedev = "/dev/net/tun";
+  const char* clonedev = "/dev/net/tun";
 
-  if( (fd = open(clonedev , O_RDWR)) < 0 ) {
+  if ((fd = open(clonedev, O_RDWR)) < 0) {
     perror("Opening /dev/net/tun");
     return fd;
   }
@@ -75,7 +404,7 @@ int tun_alloc(char *dev, int flags) {
     strncpy(ifr.ifr_name, dev, IFNAMSIZ);
   }
 
-  if( (err = ioctl(fd, TUNSETIFF, (void *)&ifr)) < 0 ) {
+  if ((err = ioctl(fd, TUNSETIFF, (void*)&ifr)) < 0) {
     perror("ioctl(TUNSETIFF)");
     close(fd);
     return err;
@@ -88,27 +417,28 @@ int tun_alloc(char *dev, int flags) {
 
 /**
  */
-size_t el_chop(const char *str)
+static size_t el_chop(const char* str)
 {
-    int i, len = strlen(str);
-    for (i = len - 1; i >= 0; i--) {
-        if (iscntrl(str[i])) {
-            len--;
-        } else {
-            break;
-        }
+  int i, len = strlen(str);
+  for (i = len - 1; i >= 0; i--) {
+    if (iscntrl(str[i])) {
+      len--;
     }
-    return len;
+    else {
+      break;
+    }
+  }
+  return len;
 }
 
 /**
  */
-int exec_command(int *status, const char *command, char *const argv[])
+static int exec_command(int* status, const char* command, char* const argv[])
 {
   int ret = 0, pid, s;
   char str[BUFSIZ];
   int pipefds[2];
-  FILE *cmdout;
+  FILE* cmdout;
 
   if (pipe(pipefds) < 0) {
     perror("pipe");
@@ -144,10 +474,12 @@ int exec_command(int *status, const char *command, char *const argv[])
   if (close(pipefds[1]) < 0) {
     perror("close");
     ret = -1;
-  } else if ((cmdout = fdopen(pipefds[0], "r")) == NULL) {
+  }
+  else if ((cmdout = fdopen(pipefds[0], "r")) == NULL) {
     perror("fdopen");
     ret = -1;
-  } else {
+  }
+  else {
     while (fgets(str, sizeof(str), cmdout) != NULL) {
       str[el_chop(str)] = '\0';
     }
@@ -164,13 +496,13 @@ int exec_command(int *status, const char *command, char *const argv[])
 
   return ret;
 }
- 
+
 /**
  */
-int set_ip(const char *dev_name, const char *ipaddr)
+static int set_ip(const char* dev_name, const char* ipaddr)
 {
   int status;
-  const char *argv[10];
+  const char* argv[10];
 
   // ip add add 10.10.10.10/24 dev tun10
   argv[0] = "ip";
@@ -181,28 +513,11 @@ int set_ip(const char *dev_name, const char *ipaddr)
   argv[5] = dev_name;
   argv[6] = NULL;
 
-  if (exec_command(&status, "ip", (char *const *) argv) < 0) {
+  if (exec_command(&status, "ip", (char* const*)argv) < 0) {
     return -1;
   }
   if (status != 0) {
     my_err("ip address add status is %d\n", status);
-    return -1;
-  }
-
-  // ip link set tun10 mtu 1400
-  argv[0] = "ip";
-  argv[1] = "link";
-  argv[2] = "set";
-  argv[3] = dev_name;
-  argv[4] = "mtu";
-  argv[5] = "1450";
-  argv[6] = NULL;
-
-  if (exec_command(&status, "ip", (char *const *) argv) < 0) {
-    return -1;
-  }
-  if (status != 0) {
-    my_err("ip link set mtu status is %d\n", status);
     return -1;
   }
 
@@ -214,7 +529,7 @@ int set_ip(const char *dev_name, const char *ipaddr)
   argv[4] = "up";
   argv[5] = NULL;
 
-  if (exec_command(&status, "ip", (char *const *) argv) < 0) {
+  if (exec_command(&status, "ip", (char* const*)argv) < 0) {
     return -1;
   }
   if (status != 0) {
@@ -224,76 +539,56 @@ int set_ip(const char *dev_name, const char *ipaddr)
 
   return 0;
 }
-
-/**************************************************************************
- * cread: read routine that checks for errors and exits if an error is    *
- *        returned.                                                       *
- **************************************************************************/
-int cread(int fd, char *buf, int n){
-  
-  int nread;
-
-  if((nread=read(fd, buf, n)) < 0){
-    perror("Reading data");
-    exit(1);
-  }
-  return nread;
-}
-
-/**************************************************************************
- * cwrite: write routine that checks for errors and exits if an error is  *
- *         returned.                                                      *
- **************************************************************************/
-int cwrite(int fd, char *buf, int n){
-  
-  int nwrite;
-
-  if((nwrite=write(fd, buf, n)) < 0){
-    perror("Writing data");
-    exit(1);
-  }
-  return nwrite;
-}
-
-/**************************************************************************
- * read_n: ensures we read exactly n bytes, and puts them into "buf".     *
- *         (unless EOF, of course)                                        *
- **************************************************************************/
-int read_n(int fd, char *buf, int n) {
-
-  int nread, left = n;
-
-  while(left > 0) {
-    if ((nread = cread(fd, buf, left)) == 0){
-      return 0 ;      
-    }else {
-      left -= nread;
-      buf += nread;
-    }
-  }
-  return n;  
-}
+#endif
 
 /**************************************************************************
  * do_debug: prints debugging stuff (doh!)                                *
  **************************************************************************/
-void do_debug(const char *msg, ...){
-  if(debug) {
+void do_debug(const char* msg, ...) {
+  if (debug) {
     va_list argp;
+    char buff[256] = { 0 };
     va_start(argp, msg);
-    vfprintf(stderr, msg, argp);
+    vsnprintf(buff, sizeof(buff), msg, argp);
     va_end(argp);
+
+    const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+      std::chrono::system_clock::now().time_since_epoch()
+      );
+
+    auto hours = std::chrono::duration_cast<std::chrono::hours>(ms).count() % 24;
+    auto minutes = std::chrono::duration_cast<std::chrono::minutes>(ms).count() % 60;
+    auto seconds = std::chrono::duration_cast<std::chrono::seconds>(ms).count() % 60;
+    auto milliseconds = ms.count() % 1000;
+
+    fprintf(stderr, "%02d:%02d:%02lld.%03lld %s", hours, minutes, seconds, milliseconds, buff);
+
+    fflush(nullptr);
   }
 }
 
 /**************************************************************************
  * my_err: prints custom error messages on stderr.                        *
  **************************************************************************/
-void my_err(const char *msg, ...) {
+void my_err(const char* msg, ...) {
   va_list argp;
+  char buff[256] = { 0 };
   va_start(argp, msg);
-  vfprintf(stderr, msg, argp);
+  vsnprintf(buff, sizeof(buff), msg, argp);
   va_end(argp);
+
+  const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+    std::chrono::system_clock::now().time_since_epoch()
+    );
+
+  auto hours = std::chrono::duration_cast<std::chrono::hours>(ms).count() % 24;
+  auto minutes = std::chrono::duration_cast<std::chrono::minutes>(ms).count() % 60;
+  auto seconds = std::chrono::duration_cast<std::chrono::seconds>(ms).count() % 60;
+  auto milliseconds = ms.count() % 1000;
+
+  fprintf(stderr, "%02d:%02d:%02lld.%03lld %s", hours, minutes, seconds, milliseconds, buff);
+
+  fflush(nullptr);
 }
 
 /**************************************************************************
@@ -313,215 +608,163 @@ void usage(void) {
   exit(1);
 }
 
-/**
- *
- */
-void tap_read(int tap_fd, int net_fd) {
-  fd_set rd_set_org;
-  fd_set rd_set;
-  FD_ZERO(&rd_set_org);
-  FD_SET(tap_fd, &rd_set_org);
-  int maxfd = tap_fd;
-  unsigned long int tap2net = 0;
-  uint16_t nread, nwrite, plength;
-  char buffer[BUFSIZE];
-
-  while(1) {
-    int ret;
-    std::memcpy(&rd_set, &rd_set_org, sizeof(rd_set_org));
-
-    ret = select(maxfd + 1, &rd_set, NULL, NULL, NULL);
-
-    if (ret < 0 && errno == EINTR){
-      continue;
-    }
-
-    if (ret < 0) {
-      perror("select()");
-      exit(1);
-    }
-
-    /* data from tun/tap: just read it and write it to the network */
-    
-    nread = read(tap_fd, buffer, BUFSIZE);
-
-    tap2net++;
-    do_debug("TAP2NET %lu: Read %d bytes from the tap interface\n", tap2net, nread);
-
-    /* write length + packet */
-    nwrite = write(net_fd, buffer, nread);
-    
-    do_debug("TAP2NET %lu: Written %d bytes to the network\n", tap2net, nwrite);
-
-    // std::this_thread::yield();
-  }
-}
-
-/**
- *
- */
-void net_read(int tap_fd, int net_fd) {
-  fd_set rd_set_org;
-  fd_set rd_set;
-  FD_ZERO(&rd_set_org);
-  FD_SET(net_fd, &rd_set_org);
-  int maxfd = net_fd;
-  unsigned long int net2tap = 0;
-  uint16_t nread, nwrite, plength;
-  char buffer[BUFSIZE];
-
-  while(1) {
-    int ret;
-    std::memcpy(&rd_set, &rd_set_org, sizeof(rd_set_org));
-
-    ret = select(maxfd + 1, &rd_set, NULL, NULL, NULL);
-
-    if (ret < 0 && errno == EINTR){
-      continue;
-    }
-
-    if (ret < 0) {
-      perror("select()");
-      exit(1);
-    }
-
-    /* data from the network: read it, and write it to the tun/tap interface. 
-     * We need to read the length first, and then the packet */
-
-    /* read packet */
-    nread = read(net_fd, buffer, sizeof(buffer));
-    net2tap++;
-    do_debug("NET2TAP %lu: Read %d bytes from the network\n", net2tap, nread);
-
-    /* now buffer[] contains a full packet or frame, write it into the tun/tap interface */ 
-    nwrite = write(tap_fd, buffer, nread);
-    do_debug("NET2TAP %lu: Written %d bytes to the tap interface\n", net2tap, nwrite);
-
-    // std::this_thread::yield();
-  }
-}
-
-/**
- *
- */
-int accept_handle(int cfd, struct sockaddr_in *local, struct sockaddr_in *remote)
+void dump_out(const char* buffer, size_t len)
 {
-  socklen_t remote_len;
-  char buff[128];
-  int fd;
-  int err;
-  const int on = 1, off = 0;
-
-  remote_len = sizeof(*remote);
-  err = recvfrom(cfd, buff, sizeof(buff), 0, (struct sockaddr *)remote, &remote_len);
-  if (err < 0) {
-    goto out;
+  if (!debug) {
+    return;
   }
-
-  fd = socket(AF_INET, SOCK_DGRAM, 0);
-  if (fd < 0) {
-    goto out;
+  size_t offset = 0;
+  while (offset < len) {
+    for (uint16_t i = 0; i < 16; i++) {
+      uint8_t data = buffer[offset + i];
+      printf("%02x ", data);	//0で埋める、2桁、16進
+      if ((offset + i) >= len) {
+        printf("\n");
+        return;
+      }
+    }
+    printf("\n");
+    offset += 16;
   }
-
-  setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, (const void*)&on, (socklen_t)sizeof(on));
-
-  err = bind(fd, (struct sockaddr *)local, sizeof(*local));
-  if (err != 0) {
-    goto out;
-  }
-
-  err = connect(fd, (struct sockaddr *)remote, remote_len);
-  if (err != 0) {
-    goto out;
-  }
-
-  return fd;
-
-out:
-  printf("%s(): error occurred errno=%d\n", __func__, errno);
-  return -1;
 }
-
 
 /**
  *
  */
-int main(int argc, char *argv[])
+int main(int argc, char* argv[])
 {
-  int tap_fd, option;
+#ifdef _WIN32
+  HANDLE tap_fd;
+#else
+  int tap_fd;
+#endif
+  int option;
+#ifndef _WIN32
   int flags = IFF_TUN;
   char if_name[IFNAMSIZ] = "";
+#endif
   char ipaddr[128] = { 0 };
-  int maxfd;
-  struct sockaddr_in local, remote;
   char remote_ip[16] = "";            /* dotted quad IP string */
   unsigned short int port = PORT;
-  int sock_fd, net_fd;
-  socklen_t remotelen;
+#ifdef _WIN32
+#else
+  int maxfd;
+  int sock_fd;
+  int net_fd;
+#endif
   int cliserv = -1;    /* must be specified on cmd line */
-  unsigned long int tap2net = 0, net2tap = 0;
-  const int on = 1;
+
+#ifdef _WIN32
+  {
+    WSADATA wsaData;
+    WSAStartup(MAKEWORD(2, 0), &wsaData);
+  }
+#endif
 
   progname = argv[0];
-  
+
   /* Check command line options */
-  while((option = getopt(argc, argv, "i:sc:p:uahdn:")) > 0) {
-    switch(option) {
-      case 'd':
-        debug = 1;
-        break;
-      case 'h':
-        usage();
-        break;
-      case 'i':
-        strncpy(if_name,optarg, IFNAMSIZ-1);
-        break;
-      case 'n':
-        strncpy(ipaddr, optarg, 128);
-        break;
-      case 's':
-        cliserv = SERVER;
-        break;
-      case 'c':
-        cliserv = CLIENT;
-        strncpy(remote_ip,optarg,15);
-        break;
-      case 'p':
-        port = atoi(optarg);
-        break;
-      case 'u':
-        flags = IFF_TUN | IFF_ONE_QUEUE;
-        break;
-      case 'a':
-        flags = IFF_TAP | IFF_NO_PI;
-        break;
-      default:
-        my_err("Unknown option %c\n", option);
-        usage();
+  while ((option = getopt(argc, argv, "i:sc:p:uahdn:")) > 0) {
+    do_debug("getopt loop %c\n", option);
+    switch (option) {
+    case 'd':
+      debug = 1;
+      break;
+    case 'h':
+      usage();
+      break;
+#ifndef _WIN32
+    case 'i':
+      strncpy(if_name, optarg, IFNAMSIZ - 1);
+      break;
+#endif
+    case 'n':
+#ifdef _WIN32
+      strncpy_s(ipaddr, sizeof(ipaddr), optarg, 128);
+#else
+      strncpy(ipaddr, optarg, 128);
+#endif
+      break;
+    case 's':
+      cliserv = SERVER;
+      break;
+    case 'c':
+      cliserv = CLIENT;
+#ifdef _WIN32
+      strncpy_s(remote_ip, sizeof(remote_ip), optarg, 15);
+#else
+      strncpy(remote_ip, optarg, 15);
+#endif
+      break;
+    case 'p':
+      port = (uint16_t)atoi(optarg);
+      break;
+#ifndef _WIN32
+    case 'u':
+      flags = IFF_TUN | IFF_ONE_QUEUE;
+      break;
+    case 'a':
+      flags = IFF_TAP | IFF_NO_PI;
+      break;
+#endif
+    default:
+      my_err("Unknown option %c\n", option);
+      usage();
     }
   }
 
   argv += optind;
   argc -= optind;
 
-  if(argc > 0) {
+  do_debug("analyzed option\n");
+
+  if (argc > 0) {
     my_err("Too many options!\n");
     usage();
   }
 
-  if(*if_name == '\0') {
+#ifndef _WIN32
+  if (*if_name == '\0') {
     my_err("Must specify interface name!\n");
     usage();
-  } else if(cliserv < 0) {
-    my_err("Must specify client or server mode!\n");
-    usage();
-  } else if((cliserv == CLIENT)&&(*remote_ip == '\0')) {
-    my_err("Must specify server address!\n");
-    usage();
   }
+  else
+#endif
+    if (cliserv < 0) {
+      my_err("Must specify client or server mode!\n");
+      usage();
+    }
+    else if ((cliserv == CLIENT) && (*remote_ip == '\0')) {
+      my_err("Must specify server address!\n");
+      usage();
+    }
 
+  asio::io_context ioc{};
+
+#ifdef _WIN32
+  auto tpl = tun_alloc("ELLanAdapter");
+  auto interface_name = std::get<0>(tpl);
+  auto instanceid = std::get<1>(tpl);
+  if (interface_name.empty() || instanceid.empty()) {
+    my_err("Error connecting to tun/tap interface\n");
+    exit(1);
+  }
+  if (set_address(ipaddr, interface_name) < 0) {
+    my_err("Error setting ipaddress to tun/tap interface\n");
+    exit(1);
+  }
+  tap_fd = vnic_open("ELDA32", instanceid);
+  if (tap_fd == nullptr) {
+    my_err("Error up to tun/tap interface\n");
+    exit(1);
+  }
+  do_debug("Successfully connected to interface %s\n", interface_name.c_str());
+
+  asio::windows::stream_handle tap_device(ioc, tap_fd);
+
+#else
   /* initialize tun/tap interface */
-  if ( (tap_fd = tun_alloc(if_name, flags)) < 0 ) {
+  if ((tap_fd = tun_alloc(if_name, flags)) < 0) {
     my_err("Error connecting to tun/tap interface %s!\n", if_name);
     exit(1);
   }
@@ -531,73 +774,137 @@ int main(int argc, char *argv[])
   }
   do_debug("Successfully connected to interface %s\n", if_name);
 
-  sock_fd = socket(AF_INET, SOCK_DGRAM, 0);
-  if (sock_fd < 0) {
-    perror("socket()");
-    exit(1);
-  }
+  asio::posix::stream_descriptor tap_device(ioc, tap_fd);
+#endif
+
+  asio::ip::udp::socket net_sock{ ioc };
+  boost::system::error_code ec;
+  std::array<char, 2000> buff;
 
   if (cliserv == CLIENT) {
-    /* Client, try to connect to server */
-
-    /* assign the destination address */
-    memset(&remote, 0, sizeof(remote));
-    remote.sin_family = AF_INET;
-    remote.sin_addr.s_addr = inet_addr(remote_ip);
-    remote.sin_port = htons(port);
-
-    /* connection request */
-    if (connect(sock_fd, (struct sockaddr*) &remote, sizeof(remote)) < 0) {
-      perror("connect()");
-      exit(1);
-    }
-
-    net_fd = sock_fd;
-    do_debug("CLIENT: Connected to server %s\n", inet_ntoa(remote.sin_addr));
-    
+    // client
+    asio::spawn([&buff, &net_sock, &remote_ip, &port](asio::yield_context yield)
+      {
+        boost::system::error_code ec;
+        net_sock.async_connect(asio::ip::udp::endpoint(asio::ip::address::from_string(remote_ip), port), yield[ec]);
+        if (ec) {
+          my_err("Failed to connect server %s\n", ec.message().c_str());
+          exit(1);
+        }
+        net_sock.async_send(asio::buffer(buff, 2), yield[ec]);
+        if (ec) {
+          my_err("Failed to async_send(connect) server %s\n", ec.message().c_str());
+          exit(1);
+        }
+      }
+    );
   }
   else {
-    /* Server, wait for connections */
+    // server
+    asio::spawn([&buff, &ioc, &net_sock, &remote_ip, &port](asio::yield_context yield)
+      {
+        asio::ip::udp::socket acceptor{ ioc, asio::ip::udp::endpoint(asio::ip::udp::v4(), port) };
+        acceptor.set_option(asio::ip::udp::socket::reuse_address(true));
+        boost::system::error_code ec;
+        asio::ip::udp::endpoint remote_endpoint;
+        acceptor.async_receive_from(asio::buffer(buff), remote_endpoint, yield[ec]);
+        if (ec) {
+          my_err("Failed to async_receive_from client %s\n", ec.message().c_str());
+          exit(1);
+        }
 
-    /* avoid EADDRINUSE error on bind() */
-    if (setsockopt(sock_fd, SOL_SOCKET, SO_REUSEADDR, (const char *)&on, (socklen_t)sizeof(on)) < 0) {
-      perror("setsockopt()");
-      exit(1);
-    }
-
-    memset(&local, 0, sizeof(local));
-    local.sin_family = AF_INET;
-    local.sin_addr.s_addr = htonl(INADDR_ANY);
-    local.sin_port = htons(port);
-    if (bind(sock_fd, (struct sockaddr*) &local, sizeof(local)) < 0) {
-      perror("bind()");
-      exit(1);
-    }
-
-    /* wait for connection request */
-    fd_set rfds;
-    FD_ZERO(&rfds);
-    FD_SET(sock_fd, &rfds);
-    int err = select(sock_fd + 1, &rfds, NULL, NULL, NULL);
-    if (err < 0) {
-      perror("select()");
-      exit(1);
-    }
-
-    memset(&remote, 0, sizeof(remote));
-    net_fd = accept_handle(sock_fd, &local, &remote);
-    if (net_fd < 0) {
-      perror("accept_handle()");
-      exit(1);
-    }
-
-    do_debug("SERVER: Client connected from sock=%d: %s\n", net_fd, inet_ntoa(remote.sin_addr));
+        asio::ip::udp::socket client_sock{ ioc };
+        client_sock.set_option(asio::ip::udp::socket::reuse_address(true));
+        client_sock.bind(asio::ip::udp::endpoint(asio::ip::udp::v4(), port));
+        client_sock.async_connect(remote_endpoint, yield[ec]);
+        net_sock = std::move(client_sock);
+      }
+    );
   }
-  
-  std::thread tap_read_th(tap_read, tap_fd, net_fd);
-  std::thread net_read_th(net_read, tap_fd, net_fd);
-  tap_read_th.join();
-  net_read_th.join();
+
+  ioc.run();
+
+  bool finish = false;
+
+  // start to read from tap
+  asio::spawn([&finish, &buff, &net_sock, &tap_device](asio::yield_context yield)
+    {
+      boost::system::error_code ec{};
+      uint32_t tap2net = 0;
+
+      while (!finish) {
+        auto nread = tap_device.async_read_some(asio::buffer(buff, sizeof(buff)), yield[ec]);
+        do_debug("TAP2NET %lu: Read %d bytes from the tap interface\n", tap2net, nread);
+
+        auto nwrite = net_sock.async_send(asio::buffer(buff, nread), yield[ec]);
+        if (ec) {
+          my_err("Failed async_write(): err=%s\n", ec.message().c_str());
+          finish = true;
+          continue;
+        }
+
+        do_debug("TAP2NET %lu: Written %d bytes to the network\n", tap2net, nwrite);
+        tap2net++;
+      }
+
+      net_sock.close(ec);
+      net_sock.cancel(ec);
+      tap_device.close(ec);
+      tap_device.cancel(ec);
+    }
+  );
+
+  // start to read from net
+  asio::spawn([&finish, &buff, &net_sock, &tap_device](asio::yield_context yield)
+    {
+      boost::system::error_code ec{};
+      uint32_t net2tap = 0;
+
+      while (!finish) {
+        auto nread = net_sock.async_receive(asio::buffer(buff), yield[ec]);
+        if (ec) {
+          my_err("Failed async_read(): err=%s\n", ec.message().c_str());
+          finish = true;
+          continue;
+        }
+        do_debug("NET2TAP %lu: Read %d bytes from the tap network\n", net2tap, nread);
+
+        auto nwrite = tap_device.async_write_some(asio::buffer(buff, nread), yield[ec]);
+        if (ec) {
+          my_err("Failed async_write(): err=%s\n", ec.message().c_str());
+          finish = true;
+          continue;
+        }
+
+        do_debug("TAP2NET %lu: Written %d bytes to the tap interface\n", net2tap, nwrite);
+        net2tap++;
+      }
+
+      net_sock.close(ec);
+      net_sock.cancel(ec);
+      tap_device.close(ec);
+      tap_device.cancel(ec);
+    }
+  );
+
+  asio::signal_set signals(ioc, SIGINT);
+  asio::spawn([&](asio::yield_context yield)
+    {
+      signals.async_wait(yield[ec]);
+
+      finish = true;
+      net_sock.close(ec);
+      net_sock.cancel(ec);
+      tap_device.close(ec);
+      tap_device.cancel(ec);
+    }
+  );
+
+  ioc.run();
+
+#ifdef _WIN32
+  WSACleanup();
+#endif
 
   return(0);
 }
