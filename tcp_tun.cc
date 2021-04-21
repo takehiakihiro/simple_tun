@@ -785,7 +785,7 @@ int main(int argc, char *argv[])
   bool finish = false;
 
   // start to read from tap
-  asio::spawn([&](asio::yield_context yield)
+  asio::spawn([&finish, &tap_device, &net_sock](asio::yield_context yield)
     {
       char buff[2000];
       char lenbuff[2];
@@ -823,7 +823,7 @@ int main(int argc, char *argv[])
   );
 
   // start to read from net
-  asio::spawn([&](asio::yield_context yield)
+  asio::spawn([&finish, &tap_device, &net_sock](asio::yield_context yield)
     {
       char buff[2000];
       char lenbuff[2];
@@ -868,7 +868,7 @@ int main(int argc, char *argv[])
   );
 
   asio::signal_set signals(ioc, SIGINT);
-  asio::spawn([&](asio::yield_context yield)
+  asio::spawn([&finish, &tap_device, &net_sock, &signals](asio::yield_context yield)
     {
       signals.async_wait(yield[ec]);
 
