@@ -803,11 +803,13 @@ int main(int argc, char* argv[])
     // server
     asio::spawn([&buff, &ioc, &net_sock, &remote_ip, &port](asio::yield_context yield)
       {
+        do_debug("start server\n");
         boost::system::error_code ec;
         asio::ip::udp::socket acceptor{ ioc, asio::ip::udp::endpoint(asio::ip::udp::v4(), port) };
         acceptor.set_option(asio::ip::udp::socket::reuse_address(true), ec);
         asio::ip::udp::endpoint remote_endpoint;
         acceptor.async_receive_from(asio::buffer(buff), remote_endpoint, yield[ec]);
+        do_debug("recv from client\n");
         if (ec) {
           my_err("Failed to async_receive_from client %s\n", ec.message().c_str());
           exit(1);
