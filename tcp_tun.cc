@@ -27,6 +27,7 @@
 #include <cerrno>
 #include <cstdarg>
 #include <cctype>
+#include <chrono>
 
 #include <unistd.h>
 #include <net/if.h>
@@ -314,9 +315,23 @@ int read_n(int fd, char *buf, int n)
 void do_debug(const char *msg, ...){
   if(debug) {
     va_list argp;
+    char buff[256] = { 0 };
     va_start(argp, msg);
-    vfprintf(stderr, msg, argp);
+    vsnprintf(buff, sizeof(buff), msg, argp);
     va_end(argp);
+
+    const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+      std::chrono::system_clock::now().time_since_epoch()
+      );
+
+    auto hours = std::chrono::duration_cast<std::chrono::hours>(ms).count() % 24;
+    auto minutes = std::chrono::duration_cast<std::chrono::minutes>(ms).count() % 60;
+    auto seconds = std::chrono::duration_cast<std::chrono::seconds>(ms).count() % 60;
+    auto milliseconds = ms.count() % 1000;
+
+    fprintf(stderr, "%02d:%02d:%02lld.%03lld %s", hours, minutes, seconds, milliseconds, buff);
+
+    fflush(nullptr);
   }
 }
 
@@ -325,9 +340,23 @@ void do_debug(const char *msg, ...){
  **************************************************************************/
 void my_err(const char *msg, ...) {
   va_list argp;
+  char buff[256] = { 0 };
   va_start(argp, msg);
-  vfprintf(stderr, msg, argp);
+  vsnprintf(buff, sizeof(buff), msg, argp);
   va_end(argp);
+
+  const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+    std::chrono::system_clock::now().time_since_epoch()
+    );
+
+  auto hours = std::chrono::duration_cast<std::chrono::hours>(ms).count() % 24;
+  auto minutes = std::chrono::duration_cast<std::chrono::minutes>(ms).count() % 60;
+  auto seconds = std::chrono::duration_cast<std::chrono::seconds>(ms).count() % 60;
+  auto milliseconds = ms.count() % 1000;
+
+  fprintf(stderr, "%02d:%02d:%02lld.%03lld %s", hours, minutes, seconds, milliseconds, buff);
+
+  fflush(nullptr);
 }
 
 /**************************************************************************
