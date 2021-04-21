@@ -780,10 +780,12 @@ int main(int argc, char* argv[])
   asio::ip::udp::socket net_sock{ ioc };
   boost::system::error_code ec;
   std::array<char, 2000> buff;
+  asio::steady_timer timer{ ioc };
+  timer.expires_from_now(std::chrono::seconds(100000));
 
   if (cliserv == CLIENT) {
     // client
-    asio::spawn([&buff, &net_sock, &remote_ip, &port](asio::yield_context yield)
+    asio::spawn([&timer, &buff, &net_sock, &remote_ip, &port](asio::yield_context yield)
       {
         boost::system::error_code ec;
         net_sock.async_connect(asio::ip::udp::endpoint(asio::ip::address::from_string(remote_ip), port), yield[ec]);
@@ -796,12 +798,13 @@ int main(int argc, char* argv[])
           my_err("Failed to async_send(connect) server %s\n", ec.message().c_str());
           exit(1);
         }
+        timer.cancel(ec);
       }
     );
   }
   else {
     // server
-    asio::spawn([&buff, &ioc, &net_sock, &remote_ip, &port](asio::yield_context yield)
+    asio::spawn([&handshaked, &buff, &ioc, &net_sock, &remote_ip, &port](asio::yield_context yield)
       {
         do_debug("start server\n");
         boost::system::error_code ec;
@@ -839,21 +842,20 @@ int main(int argc, char* argv[])
           exit(1);
         }
         net_sock = std::move(client_sock);
+        timer.cancel(ec);
       }
     );
   }
 
-  ioc.run();
-
-  my_err("handshaked\n");
-
   bool finish = false;
 
   // start to read from tap
-  asio::spawn([&finish, &buff, &net_sock, &tap_device](asio::yield_context yield)
+  asio::spawn([&timer, &finish, &buff, &net_sock, &tap_device](asio::yield_context yield)
     {
       boost::system::error_code ec{};
       uint32_t tap2net = 0;
+
+      timer.async_wait(yield[ec]);
 
       while (!finish) {
         auto nread = tap_device.async_read_some(asio::buffer(buff, sizeof(buff)), yield[ec]);
@@ -878,10 +880,12 @@ int main(int argc, char* argv[])
   );
 
   // start to read from net
-  asio::spawn([&finish, &buff, &net_sock, &tap_device](asio::yield_context yield)
+  asio::spawn([&timer, &finish, &buff, &net_sock, &tap_device](asio::yield_context yield)
     {
       boost::system::error_code ec{};
       uint32_t net2tap = 0;
+
+      timer.async_wait(yield[ec]);
 
       while (!finish) {
         auto nread = net_sock.async_receive(asio::buffer(buff), yield[ec]);
@@ -922,7 +926,6 @@ int main(int argc, char* argv[])
     }
   );
 
-  my_err("start\n");
   ioc.run();
 
 #ifdef _WIN32
