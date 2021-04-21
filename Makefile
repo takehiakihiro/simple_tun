@@ -1,5 +1,5 @@
 CXXFLAGS += -pthread
-LDFLAGS += -pthread
+LDFLAGS += -pthread -lboost_system
 
 TARGET = tcp_tun udp_tun tls_tun dtls_tun
 
