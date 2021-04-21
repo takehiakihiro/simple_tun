@@ -74,8 +74,6 @@ namespace asio = boost::asio;
 
 #ifdef _WIN32
 
-bool finish = false;
-
 typedef int socklen_t;
 
 std::mutex tun_lock;
@@ -783,6 +781,8 @@ int main(int argc, char *argv[])
     my_err("Failed to connect server %s\n", ec.message().c_str());
     exit(1);
   }
+
+  bool finish = false;
 
   // start to read from tap
   asio::spawn([&](asio::yield_context yield)
