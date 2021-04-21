@@ -914,6 +914,7 @@ int main(int argc, char* argv[])
   signals.async_wait([&net_sock, &finish, &tap_device](const boost::system::error_code& err, int signum)
     {
       finish = true;
+      boost::system::error_code ec{};
       net_sock.close(ec);
       net_sock.cancel(ec);
       tap_device.close(ec);
