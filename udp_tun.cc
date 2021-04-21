@@ -923,6 +923,7 @@ int main(int argc, char* argv[])
     }
   );
 
+  my_err("start\n");
   ioc.run();
 
 #ifdef _WIN32
