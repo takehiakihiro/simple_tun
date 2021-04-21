@@ -870,6 +870,7 @@ int main(int argc, char *argv[])
   asio::signal_set signals(ioc, SIGINT);
   asio::spawn([&finish, &tap_device, &net_sock, &signals](asio::yield_context yield)
     {
+      boost::system::error_code ec{};
       signals.async_wait(yield[ec]);
 
       finish = true;
