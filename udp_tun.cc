@@ -819,8 +819,20 @@ int main(int argc, char* argv[])
 
         asio::ip::udp::socket client_sock{ ioc };
         client_sock.set_option(asio::ip::udp::socket::reuse_address(true), ec);
-        client_sock.bind(asio::ip::udp::endpoint(asio::ip::udp::v4(), port));
+        if (ec) {
+          my_err("Failed to set_option msg=%s\n", ec.message().c_str());
+          exit(1);
+        }
+        client_sock.bind(asio::ip::udp::endpoint(asio::ip::udp::v4(), port), ec);
+        if (ec) {
+          my_err("Failed to bind msg=%s\n", ec.message().c_str());
+          exit(1);
+        }
         client_sock.async_connect(remote_endpoint, yield[ec]);
+        if (ec) {
+          my_err("Failed to async_connect msg=%s\n", ec.message().c_str());
+          exit(1);
+        }
         net_sock = std::move(client_sock);
       }
     );
