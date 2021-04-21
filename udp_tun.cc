@@ -817,7 +817,7 @@ int main(int argc, char* argv[])
 
         do_debug("remote=%s\n", remote_endpoint.address().to_string().c_str());
 
-        asio::ip::udp::socket client_sock{ ioc };
+        asio::ip::udp::socket client_sock{ ioc, asio::ip::udp::endpoint(asio::ip::udp::v4(), port) };
         client_sock.set_option(asio::ip::udp::socket::reuse_address(true), ec);
         if (ec) {
           my_err("Failed to set_option msg=%s\n", ec.message().c_str());
