@@ -527,7 +527,9 @@ static int set_ip(const char* dev_name, const char* ipaddr)
   argv[2] = "set";
   argv[3] = dev_name;
   argv[4] = "up";
-  argv[5] = NULL;
+  argv[5] = "mtu";
+  argv[6] = "1420";
+  argv[7] = NULL;
 
   if (exec_command(&status, "ip", (char* const*)argv) < 0) {
     return -1;
