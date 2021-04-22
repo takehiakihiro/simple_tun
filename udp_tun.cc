@@ -604,7 +604,7 @@ int main(int argc, char *argv[])
     socklen_t optlen;
     optlen = sizeof(curr_snd_buff);
     // get the default socketh send buffer size
-    if (setsockopt(net_fd, SOL_SOCKET, SO_SNDBUF, &curr_snd_buff, &optlen) == -1) {
+    if (setsockopt(net_fd, SOL_SOCKET, SO_SNDBUF, &curr_snd_buff, optlen) == -1) {
       perror("getting the socket send buffer");
       exit(1);
     }
@@ -613,7 +613,7 @@ int main(int argc, char *argv[])
     int curr_rcv_buff = 2129920;
     optlen = sizeof(curr_rcv_buff);
     // get the default socketh send buffer size
-    if (setsockopt(net_fd, SOL_SOCKET, SO_RCVBUF, &curr_rcv_buff, &optlen) == -1) {
+    if (setsockopt(net_fd, SOL_SOCKET, SO_RCVBUF, &curr_rcv_buff, optlen) == -1) {
       perror("getting the socket recv buffer");
       exit(1);
     }
