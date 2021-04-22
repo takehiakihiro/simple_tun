@@ -616,20 +616,20 @@ int main(int argc, char *argv[]) {
 
   my_err("start\n");
   {
-    int curr_snd_buff = 0;
+    int curr_snd_buff = 2129920;
     socklen_t optlen;
     optlen = sizeof(curr_snd_buff);
     // get the default socketh send buffer size
-    if (getsockopt(net_fd, SOL_SOCKET, SO_SNDBUF, &curr_snd_buff, &optlen) == -1) {
+    if (setsockopt(net_fd, SOL_SOCKET, SO_SNDBUF, &curr_snd_buff, &optlen) == -1) {
       perror("getting the socket send buffer");
       exit(1);
     }
     my_err("SO_SNDBUF=%d\n", curr_snd_buff);
 
-    int curr_rcv_buff = 0;
+    int curr_rcv_buff = 2129920;
     optlen = sizeof(curr_rcv_buff);
     // get the default socketh send buffer size
-    if (getsockopt(net_fd, SOL_SOCKET, SO_RCVBUF, &curr_rcv_buff, &optlen) == -1) {
+    if (setsockopt(net_fd, SOL_SOCKET, SO_RCVBUF, &curr_rcv_buff, &optlen) == -1) {
       perror("getting the socket recv buffer");
       exit(1);
     }
