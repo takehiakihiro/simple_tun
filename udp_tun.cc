@@ -553,6 +553,10 @@ int main(int argc, char *argv[])
     }
 
     net_fd = sock_fd;
+
+    char handshakebuff[2] = { 0 };
+    cwrite(net_fd, handshakebuff, 2);
+
     do_debug("CLIENT: Connected to server %s\n", inet_ntoa(remote.sin_addr));
     
   }
