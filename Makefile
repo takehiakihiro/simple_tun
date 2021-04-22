@@ -1,4 +1,4 @@
-CXXFLAGS += -pthread
+CXXFLAGS += -pthread -std=c++11
 LDFLAGS += -pthread
 
 TARGET = tcp_tun udp_tun tls_tun dtls_tun
