@@ -258,13 +258,8 @@ int cread(int fd, char *buf, int n)
   int nread;
 
   if ((nread = read(fd, buf, n)) < 0) {
-    if (errno == EAGAIN) {
-      return 0;
-    }
-    else {
-      perror("Reading data");
-      exit(1);
-    }
+    perror("Reading data");
+    exit(1);
   }
   return nread;
 }
@@ -278,13 +273,8 @@ int cwrite(int fd, char *buf, int n)
   int nwrite;
 
   if ((nwrite = write(fd, buf, n)) < 0) {
-    if (errno == EAGAIN) {
-      return 0;
-    }
-    else {
-      perror("Writing data");
-      exit(1);
-    }
+    perror("Writing data");
+    exit(1);
   }
   return nwrite;
 }
@@ -457,34 +447,26 @@ void net_read(int tap_fd, int net_fd) {
       exit(1);
     }
 
-    while (true) {
-      /* data from the network: read it, and write it to the tun/tap interface. 
-       * We need to read the length first, and then the packet */
+    /* data from the network: read it, and write it to the tun/tap interface. 
+     * We need to read the length first, and then the packet */
 
-      if (plength == 0) {
-        /* Read length */      
-        nread = read_n(net_fd, (char *)&plength, sizeof(plength));
-        if(nread == 0) {
-          /* ctrl-c at the other end */
-          break;
-        }
-      }
-
-      /* read packet */
-      nread = read_n(net_fd, buffer, ntohs(plength));
-      if(nread == 0) {
-        /* ctrl-c at the other end */
-        break;
-      }
-      do_debug("NET2TAP %lu: Read %d bytes from the network\n", net2tap, nread);
-
-      /* now buffer[] contains a full packet or frame, write it into the tun/tap interface */ 
-      nwrite = cwrite(tap_fd, buffer, nread);
-      do_debug("NET2TAP %lu: Written %d bytes to the tap interface\n", net2tap, nwrite);
-
-      plength = 0;
-      net2tap++;
+    /* Read length */      
+    nread = read_n(net_fd, (char *)&plength, sizeof(plength));
+    if(nread == 0) {
+      /* ctrl-c at the other end */
+      break;
     }
+
+    /* read packet */
+    nread = read_n(net_fd, buffer, ntohs(plength));
+    do_debug("NET2TAP %lu: Read %d bytes from the network\n", net2tap, nread);
+
+    /* now buffer[] contains a full packet or frame, write it into the tun/tap interface */ 
+    nwrite = cwrite(tap_fd, buffer, nread);
+    do_debug("NET2TAP %lu: Written %d bytes to the tap interface\n", net2tap, nwrite);
+
+    plength = 0;
+    net2tap++;
   }
 }
 
@@ -632,17 +614,6 @@ int main(int argc, char *argv[]) {
     do_debug("SERVER: Client connected from %s\n", inet_ntoa(remote.sin_addr));
   }
 
-#ifdef _WIN32
-  {
-    u_long val = 1;
-    ioctlsocket(net_fd, FIONBIO, &val);
-  }
-#else
-  {
-    fcntl(net_fd, F_SETFL, O_NONBLOCK);
-  }
-#endif
-  
   std::thread tap_read_th(tap_read, tap_fd, net_fd);
   std::thread net_read_th(net_read, tap_fd, net_fd);
   tap_read_th.join();
