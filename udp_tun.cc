@@ -598,6 +598,28 @@ int main(int argc, char *argv[])
     do_debug("SERVER: Client connected from sock=%d: %s\n", net_fd, inet_ntoa(remote.sin_addr));
   }
   
+  my_err("start\n");
+  {
+    int curr_snd_buff = 0;
+    socklen_t optlen;
+    optlen = sizeof(curr_snd_buff);
+    // get the default socketh send buffer size
+    if (getsockopt(net_fd, SOL_SOCKET, SO_SNDBUF, &curr_snd_buff, &optlen) == -1) {
+      perror("getting the socket send buffer");
+      exit(1);
+    }
+    my_err("SO_SNDBUF=%d\n", curr_snd_buff);
+
+    int curr_rcv_buff = 0;
+    optlen = sizeof(curr_rcv_buff);
+    // get the default socketh send buffer size
+    if (getsockopt(net_fd, SOL_SOCKET, SO_RCVBUF, &curr_rcv_buff, &optlen) == -1) {
+      perror("getting the socket recv buffer");
+      exit(1);
+    }
+    my_err("SO_RCVBUF=%d\n", curr_rcv_buff);
+  }
+
   std::thread tap_read_th(tap_read, tap_fd, net_fd);
   std::thread net_read_th(net_read, tap_fd, net_fd);
   tap_read_th.join();
